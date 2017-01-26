@@ -1,4 +1,6 @@
 /* macho.c -- Get debug data from an Mach-O file for backtraces.
+   Copyright (C) 2012-2016 Free Software Foundation, Inc.
+   Written by Ian Lance Taylor, Google.
    Copyright (C) 2017 John Colanduoni.
 
 Redistribution and use in source and binary forms, with or without
@@ -29,10 +31,14 @@ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.  */
 
+#include "config.h"
+
 #include <sys/types.h>
 #include <sys/syslimits.h>
 #include <string.h>
 #include <mach-o/loader.h>
+#include <mach-o/nlist.h>
+#include <mach-o/stab.h>
 #include <mach-o/dyld.h>
 #include <uuid/uuid.h>
 #include <dirent.h>
@@ -47,6 +53,7 @@ struct macho_commands_view
     uint32_t commands_count;
     uint32_t commands_total_size;
     int bytes_swapped;
+    int bits;
 };
 
 enum debug_section
@@ -74,6 +81,40 @@ struct found_dwarf_section
     uint64_t file_size;
     const unsigned char *data;
 };
+
+/*
+ * Mach-O symbols don't have a length. As a result we have to infer it
+ * by sorting the symbol addresses for each image and recording the
+ * memory range attributed to each image.
+ */
+struct macho_symbol
+{
+    uintptr_t addr;
+    size_t size;
+    const char *name;
+};
+
+struct macho_syminfo_data
+{
+    struct macho_syminfo_data *next;
+    struct macho_symbol *symbols;
+    size_t symbol_count;
+    uintptr_t min_addr;
+    uintptr_t max_addr;
+};
+
+uint16_t
+macho_file_to_host_u16 (int file_bytes_swapped, uint16_t input)
+{
+  if (file_bytes_swapped)
+    {
+      return (input >> 8) | (input << 8);
+    }
+  else
+    {
+      return input;
+    }
+}
 
 uint32_t
 macho_file_to_host_u32 (int file_bytes_swapped, uint32_t input)
@@ -112,7 +153,6 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
                     backtrace_error_callback error_callback,
                     void *data, struct macho_commands_view *commands_view)
 {
-  int file_bits;
   uint32_t commands_offset;
 
   int ret = 0;
@@ -127,19 +167,19 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
   switch (*(uint32_t *) file_header_view.data)
     {
       case MH_MAGIC:
-        file_bits = 32;
+        commands_view->bits = 32;
       commands_view->bytes_swapped = 0;
       break;
       case MH_CIGAM:
-        file_bits = 32;
+        commands_view->bits = 32;
       commands_view->bytes_swapped = 1;
       break;
       case MH_MAGIC_64:
-        file_bits = 64;
+        commands_view->bits = 64;
       commands_view->bytes_swapped = 0;
       break;
       case MH_CIGAM_64:
-        file_bits = 64;
+        commands_view->bits = 64;
       commands_view->bytes_swapped = 1;
       break;
       default:
@@ -147,7 +187,7 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
       goto end;
     }
 
-  if (file_bits == 64)
+  if (commands_view->bits == 64)
     {
       const struct mach_header_64 *file_header = file_header_view.data;
       commands_view->commands_count =
@@ -184,7 +224,8 @@ end:
 }
 
 int
-macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED, int descriptor ATTRIBUTE_UNUSED,
+macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED,
+                int descriptor ATTRIBUTE_UNUSED,
                 backtrace_error_callback error_callback,
                 void *data, struct macho_commands_view *commands_view,
                 uuid_t *uuid)
@@ -196,7 +237,9 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED, int descriptor A
       if (offset + sizeof (struct load_command)
           > commands_view->commands_total_size)
         {
-          error_callback (data, "executable file is truncated", 0);
+          error_callback (data,
+                          "executable file contains out of range command offset",
+                          0);
           return 0;
         }
 
@@ -213,7 +256,9 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED, int descriptor A
           if (offset + sizeof (struct uuid_command)
               > commands_view->commands_total_size)
             {
-              error_callback (data, "executable file is truncated", 0);
+              error_callback (data,
+                              "executable file contains out of range command offset",
+                              0);
               return 0;
             }
 
@@ -235,21 +280,25 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED, int descriptor A
  * Darwin platforms.
  */
 int
-macho_get_base (struct backtrace_state *state ATTRIBUTE_UNUSED, int descriptor ATTRIBUTE_UNUSED,
-                backtrace_error_callback error_callback,
-                void *data, struct macho_commands_view *commands_view,
-                uint64_t *base_address)
+macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
+                      int descriptor ATTRIBUTE_UNUSED,
+                      backtrace_error_callback error_callback,
+                      void *data, struct macho_commands_view *commands_view,
+                      uint64_t *base_address, uint64_t *max_address)
 {
   size_t offset = 0;
-  uint64_t text_vmaddr;
-  uint64_t text_fileoff;
+  int found_text = 0;
+
+  *max_address = 0;
 
   for (uint32_t i = 0; i < commands_view->commands_count; i++)
     {
       if (offset + sizeof (struct load_command)
           > commands_view->commands_total_size)
         {
-          error_callback (data, "executable file is truncated", 0);
+          error_callback (data,
+                          "executable file contains out of range command offset",
+                          0);
           return 0;
         }
 
@@ -266,60 +315,357 @@ macho_get_base (struct backtrace_state *state ATTRIBUTE_UNUSED, int descriptor A
           if (offset + sizeof (struct segment_command)
               > commands_view->commands_total_size)
             {
-              error_callback (data, "executable file is truncated", 0);
+              error_callback (data,
+                              "executable file contains out of range command offset",
+                              0);
               return 0;
             }
 
           const struct segment_command *raw_segment =
               (const struct segment_command *) raw_command;
 
+          uint32_t segment_vmaddr = macho_file_to_host_u32 (
+              commands_view->bytes_swapped, raw_segment->vmaddr);
+          uint32_t segment_vmsize = macho_file_to_host_u32 (
+              commands_view->bytes_swapped, raw_segment->vmsize);
+          uint32_t segment_maxaddr = segment_vmaddr + segment_vmsize;
+
           if (strncmp (raw_segment->segname, "__TEXT",
                        sizeof (raw_segment->segname)) == 0)
             {
-              text_vmaddr = macho_file_to_host_u32 (
-                  commands_view->bytes_swapped, raw_segment->vmaddr);
-              text_fileoff = macho_file_to_host_u32 (
+              uint32_t text_fileoff = macho_file_to_host_u32 (
                   commands_view->bytes_swapped, raw_segment->fileoff);
-              *base_address = text_vmaddr - text_fileoff;
-              return 1;
+              *base_address = segment_vmaddr - text_fileoff;
+
+              found_text = 1;
             }
+
+          if (segment_maxaddr > *max_address)
+            *max_address = segment_maxaddr;
         }
       else if (command.cmd == LC_SEGMENT_64)
         {
           if (offset + sizeof (struct segment_command_64)
               > commands_view->commands_total_size)
             {
-              error_callback (data, "executable file is truncated", 0);
+              error_callback (data,
+                              "executable file contains out of range command offset",
+                              0);
               return 0;
             }
 
-          struct segment_command *raw_segment =
-              (struct segment_command *) raw_command;
+          struct segment_command_64 *raw_segment =
+              (struct segment_command_64 *) raw_command;
+
+          uint64_t segment_vmaddr = macho_file_to_host_u64 (
+              commands_view->bytes_swapped, raw_segment->vmaddr);
+          uint64_t segment_vmsize = macho_file_to_host_u64 (
+              commands_view->bytes_swapped, raw_segment->vmsize);
+          uint64_t segment_maxaddr = segment_vmaddr + segment_vmsize;
 
           if (strncmp (raw_segment->segname, "__TEXT",
                        sizeof (raw_segment->segname)) == 0)
             {
-              text_vmaddr = macho_file_to_host_u64 (
-                  commands_view->bytes_swapped, raw_segment->vmaddr);
-              text_fileoff = macho_file_to_host_u64 (
+              uint64_t text_fileoff = macho_file_to_host_u64 (
                   commands_view->bytes_swapped, raw_segment->fileoff);
-              *base_address = text_vmaddr - text_fileoff;
-              return 1;
+              *base_address = segment_vmaddr - text_fileoff;
+
+              found_text = 1;
             }
+
+          if (segment_maxaddr > *max_address)
+            *max_address = segment_maxaddr;
         }
 
       offset += command.cmdsize;
     }
 
-  error_callback (data, "executable file is missing a valid __TEXT segment", 0);
-  return 0;
+  if (found_text)
+    return 1;
+  else
+    {
+      error_callback (data, "executable is missing __TEXT segment", 0);
+      return 0;
+    }
+}
+
+static int
+macho_symbol_compare_addr (const void *left_raw, const void *right_raw)
+{
+  const struct macho_symbol *left = left_raw;
+  const struct macho_symbol *right = right_raw;
+
+  if (left->addr > right->addr)
+    return 1;
+  else if (left->addr < right->addr)
+    return -1;
+  else
+    return 0;
+}
+
+int
+macho_symbol_type_relevant (uint8_t type)
+{
+  uint8_t type_field = (uint8_t) (type & N_TYPE);
+
+  return !(type & N_EXT) &&
+         (type_field == N_ABS || type_field == N_SECT);
+}
+
+int
+macho_add_symtab (struct backtrace_state *state,
+                  backtrace_error_callback error_callback,
+                  void *data, int descriptor,
+                  struct macho_commands_view *commands_view,
+                  uintptr_t base_address, uintptr_t max_image_address,
+                  intptr_t vmslide, int *found_sym)
+{
+  struct macho_syminfo_data *syminfo_data;
+
+  int ret = 0;
+  size_t offset = 0;
+  struct backtrace_view symtab_view;
+  int symtab_view_valid = 0;
+  struct backtrace_view strtab_view;
+  int strtab_view_valid = 0;
+
+  *found_sym = 0;
+
+  for (uint32_t i = 0; i < commands_view->commands_count; i++)
+    {
+      if (offset + sizeof (struct load_command)
+          > commands_view->commands_total_size)
+        {
+          error_callback (data,
+                          "executable file contains out of range command offset",
+                          0);
+          return 0;
+        }
+
+      const struct load_command *raw_command =
+          commands_view->view.data + offset;
+      struct load_command command;
+      command.cmd = macho_file_to_host_u32 (commands_view->bytes_swapped,
+                                            raw_command->cmd);
+      command.cmdsize = macho_file_to_host_u32 (commands_view->bytes_swapped,
+                                                raw_command->cmdsize);
+
+      if (command.cmd == LC_SYMTAB)
+        {
+          if (offset + sizeof (struct symtab_command)
+              > commands_view->commands_total_size)
+            {
+              error_callback (data,
+                              "executable file contains out of range command offset",
+                              0);
+              return 0;
+            }
+
+          const struct symtab_command *symtab_command =
+              (struct symtab_command *) raw_command;
+
+          uint32_t symbol_table_offset = macho_file_to_host_u32 (
+              commands_view->bytes_swapped, symtab_command->symoff);
+          uint32_t symbol_count = macho_file_to_host_u32 (
+              commands_view->bytes_swapped, symtab_command->nsyms);
+          uint32_t string_table_offset = macho_file_to_host_u32 (
+              commands_view->bytes_swapped, symtab_command->stroff);
+          uint32_t string_table_size = macho_file_to_host_u32 (
+              commands_view->bytes_swapped, symtab_command->strsize);
+
+          size_t symbol_entry_size =
+              (commands_view->bits == 32) ? sizeof (struct nlist)
+                                          : sizeof (struct nlist_64);
+
+
+          if (!backtrace_get_view (state, descriptor, symbol_table_offset,
+                                   symbol_count * symbol_entry_size,
+                                   error_callback, data, &symtab_view))
+            goto end;
+          symtab_view_valid = 1;
+
+          if (!backtrace_get_view (state, descriptor, string_table_offset,
+                                   string_table_size, error_callback, data,
+                                   &strtab_view))
+            goto end;
+          strtab_view_valid = 1;
+
+          if (commands_view->bits == 32)
+            {
+              goto end; // TODO
+            }
+          else /* commands_view->bits == 64 */
+            {
+              // Count functions first
+              size_t function_count = 0;
+
+              for (uint32_t j = 0; j < symbol_count; j++)
+                {
+                  const struct nlist_64 *raw_sym =
+                      ((const struct nlist_64 *) symtab_view.data) + j;
+
+                  if(macho_symbol_type_relevant (raw_sym->n_type))
+                    {
+                      function_count += 1;
+                    }
+                }
+
+              // Allocate space for the:
+              //  (a) macho_syminfo_data for this image
+              //  (b) macho_symbol entries
+              syminfo_data =
+                  backtrace_alloc (state,
+                                   sizeof (struct macho_syminfo_data),
+                                   error_callback, data);
+
+              syminfo_data->symbols = backtrace_alloc (
+                  state, function_count * sizeof (struct macho_symbol),
+                  error_callback, data);
+              syminfo_data->symbol_count = function_count;
+              syminfo_data->next = NULL;
+              syminfo_data->min_addr = base_address;
+              syminfo_data->max_addr = max_image_address;
+
+              uint32_t syminfo_index = 0;
+              for (uint32_t symtab_index = 0;
+                   symtab_index < symbol_count; symtab_index++)
+                {
+                  const struct nlist_64 *raw_sym =
+                      ((const struct nlist_64 *) symtab_view.data) +
+                      symtab_index;
+
+                  if (macho_symbol_type_relevant (raw_sym->n_type))
+                    {
+                      syminfo_data->symbols[syminfo_index].addr =
+                          macho_file_to_host_u64 (commands_view->bytes_swapped,
+                                                  raw_sym->n_value) + vmslide;
+
+                      size_t strtab_index = macho_file_to_host_u32 (
+                          commands_view->bytes_swapped,
+                          raw_sym->n_un.n_strx);
+                      // Check the range of the supposed "string" we've been
+                      // given
+
+                      if (strtab_index >= string_table_size)
+                        {
+                          error_callback (
+                              data,
+                              "dSYM file contains out of range string table index",
+                              0);
+                          goto end;
+                        }
+
+                      const char *name = strtab_view.data + strtab_index;
+                      size_t max_len_plus_one =
+                          string_table_size - strtab_index;
+
+                      if (strnlen (name, max_len_plus_one) >= max_len_plus_one)
+                        {
+                          error_callback (
+                              data,
+                              "dSYM file contains unterminated string",
+                              0);
+                          goto end;
+                        }
+
+                      // Remove underscore prefixes
+                      if (name[0] == '_')
+                        {
+                          name = name + 1;
+                        }
+
+                      syminfo_data->symbols[syminfo_index].name = name;
+
+                      syminfo_index += 1;
+                    }
+                }
+            }
+
+          backtrace_qsort (syminfo_data->symbols,
+                           syminfo_data->symbol_count,
+                           sizeof (struct macho_symbol),
+                           macho_symbol_compare_addr);
+
+          // Calculate symbol sizes
+          for (size_t syminfo_index = 0;
+               syminfo_index < syminfo_data->symbol_count; syminfo_index++)
+            {
+              if (syminfo_index + 1 < syminfo_data->symbol_count)
+                {
+                  syminfo_data->symbols[syminfo_index].size =
+                      syminfo_data->symbols[syminfo_index + 1].addr -
+                      syminfo_data->symbols[syminfo_index].addr;
+                }
+              else
+                {
+                  syminfo_data->symbols[syminfo_index].size =
+                      max_image_address -
+                      syminfo_data->symbols[syminfo_index].addr;
+                }
+            }
+
+          if (!state->threaded)
+            {
+              struct macho_syminfo_data **pp;
+
+              for (pp = (struct macho_syminfo_data **) (void *) &state->syminfo_data;
+                   *pp != NULL;
+                   pp = &(*pp)->next);
+              *pp = syminfo_data;
+            }
+          else
+            {
+              while (1)
+                {
+                  struct macho_syminfo_data **pp;
+
+                  pp = (struct macho_syminfo_data **) (void *) &state->syminfo_data;
+
+                  while (1)
+                    {
+                      struct macho_syminfo_data *p;
+
+                      p = backtrace_atomic_load_pointer (pp);
+
+                      if (p == NULL)
+                        break;
+
+                      pp = &p->next;
+                    }
+
+                  if (__sync_bool_compare_and_swap (pp, NULL, syminfo_data))
+                    break;
+                }
+            }
+
+          strtab_view_valid = 0; // We need to keep string table around
+          *found_sym = 1;
+          ret = 1;
+          goto end;
+        }
+
+      offset += command.cmdsize;
+    }
+
+  // No symbol table here
+  ret = 1;
+  goto end;
+
+end:
+  if (symtab_view_valid)
+    backtrace_release_view (state, &symtab_view, error_callback, data);
+  if (strtab_view_valid)
+    backtrace_release_view (state, &strtab_view, error_callback, data);
+  return ret;
 }
 
 int
 macho_try_dwarf (struct backtrace_state *state,
                  backtrace_error_callback error_callback,
                  void *data, fileline *fileline_fn, uuid_t *executable_uuid,
-                 uintptr_t base_address, char *dwarf_filename)
+                 uintptr_t base_address, uintptr_t max_image_address,
+                 intptr_t vmslide, char *dwarf_filename, int *matched,
+                 int *found_sym, int *found_dwarf)
 {
   uuid_t dwarf_uuid;
 
@@ -331,6 +677,10 @@ macho_try_dwarf (struct backtrace_state *state,
   struct backtrace_view dwarf_view;
   int dwarf_view_valid = 0;
   size_t offset = 0;
+
+  *matched = 0;
+  *found_sym = 0;
+  *found_dwarf = 0;
 
   if ((dwarf_descriptor = backtrace_open (dwarf_filename, error_callback,
                                           data, NULL)) == 0)
@@ -350,6 +700,18 @@ macho_try_dwarf (struct backtrace_state *state,
       goto end;
     }
   if (memcmp (executable_uuid, &dwarf_uuid, sizeof (uuid_t)) != 0)
+    {
+      // DWARF doesn't belong to desired executable
+      ret = 1;
+      goto end;
+    }
+
+  *matched = 1;
+
+  // Read symbol table
+  if (!macho_add_symtab (state, error_callback, data, dwarf_descriptor,
+                         &commands_view, base_address, max_image_address,
+                         vmslide, found_sym))
     goto end;
 
   // Get DWARF sections
@@ -363,7 +725,8 @@ macho_try_dwarf (struct backtrace_state *state,
       if (offset + sizeof (struct load_command)
           > commands_view.commands_total_size)
         {
-          error_callback (data, "dSYM file is truncated", 0);
+          error_callback (data,
+                          "dSYM file contains out of range command offset", 0);
           goto end;
         }
 
@@ -384,7 +747,9 @@ macho_try_dwarf (struct backtrace_state *state,
               if (offset + sizeof (struct segment_command)
                   > commands_view.commands_total_size)
                 {
-                  error_callback (data, "dSYM file is truncated", 0);
+                  error_callback (data,
+                                  "dSYM file contains out of range command offset",
+                                  0);
                   goto end;
                 }
 
@@ -406,7 +771,9 @@ macho_try_dwarf (struct backtrace_state *state,
                       if (section_offset + sizeof (struct section) >
                           commands_view.commands_total_size)
                         {
-                          error_callback (data, "dSYM file is truncated", 0);
+                          error_callback (data,
+                                          "dSYM file contains out of range command offset",
+                                          0);
                           goto end;
                         }
 
@@ -419,6 +786,8 @@ macho_try_dwarf (struct backtrace_state *state,
                                        debug_section_names[k],
                                        sizeof (raw_section->sectname)) == 0)
                             {
+                              *found_dwarf = 1;
+
                               dwarf_sections[k].file_offset =
                                   macho_file_to_host_u32 (
                                       commands_view.bytes_swapped,
@@ -444,6 +813,8 @@ macho_try_dwarf (struct backtrace_state *state,
 
                       section_offset += sizeof (struct section);
                     }
+
+                  break;
                 }
             }
           else
@@ -451,7 +822,9 @@ macho_try_dwarf (struct backtrace_state *state,
               if (offset + sizeof (struct segment_command_64)
                   > commands_view.commands_total_size)
                 {
-                  error_callback (data, "dSYM file is truncated", 0);
+                  error_callback (data,
+                                  "dSYM file contains out of range command offset",
+                                  0);
                   goto end;
                 }
 
@@ -473,7 +846,9 @@ macho_try_dwarf (struct backtrace_state *state,
                       if (section_offset + sizeof (struct section_64) >
                           commands_view.commands_total_size)
                         {
-                          error_callback (data, "dSYM file is truncated", 0);
+                          error_callback (data,
+                                          "dSYM file contains out of range command offset",
+                                          0);
                           goto end;
                         }
 
@@ -486,6 +861,8 @@ macho_try_dwarf (struct backtrace_state *state,
                                        debug_section_names[k],
                                        sizeof (raw_section->sectname)) == 0)
                             {
+                              *found_dwarf = 1;
+
                               dwarf_sections[k].file_offset =
                                   macho_file_to_host_u32 (
                                       commands_view.bytes_swapped,
@@ -511,6 +888,8 @@ macho_try_dwarf (struct backtrace_state *state,
 
                       section_offset += sizeof (struct section_64);
                     }
+
+                  break;
                 }
             }
         }
@@ -518,8 +897,12 @@ macho_try_dwarf (struct backtrace_state *state,
       offset += command.cmdsize;
     }
 
-  if (max_dwarf_offset == 0)
-    goto end;
+  if (!*found_dwarf)
+    {
+      // No DWARF in this file
+      ret = 1;
+      goto end;
+    }
 
   if (!backtrace_get_view (state, dwarf_descriptor, min_dwarf_offset,
                            max_dwarf_offset - min_dwarf_offset, error_callback,
@@ -536,7 +919,7 @@ macho_try_dwarf (struct backtrace_state *state,
             dwarf_view.data + dwarf_sections[i].file_offset - min_dwarf_offset;
     }
 
-  if (!backtrace_dwarf_add (state, base_address,
+  if (!backtrace_dwarf_add (state, vmslide,
                             dwarf_sections[DEBUG_INFO].data,
                             dwarf_sections[DEBUG_INFO].file_size,
                             dwarf_sections[DEBUG_LINE].data,
@@ -552,8 +935,9 @@ macho_try_dwarf (struct backtrace_state *state,
                             error_callback, data, fileline_fn))
     goto end;
 
-  dwarf_descriptor_valid = 0; // Don't release the DWARF view because it is
-  // still in use
+  // Don't release the DWARF view because it is still in use
+  dwarf_descriptor_valid = 0;
+  dwarf_view_valid = 0;
   ret = 1;
 
 end:
@@ -571,7 +955,9 @@ int
 macho_try_dsym (struct backtrace_state *state,
                 backtrace_error_callback error_callback,
                 void *data, fileline *fileline_fn, uuid_t *executable_uuid,
-                uintptr_t base_address, char *dsym_filename)
+                uintptr_t base_address, uintptr_t max_image_address,
+                intptr_t vmslide, char *dsym_filename, int *matched,
+                int *found_sym, int *found_dwarf)
 {
   int ret = 0;
   char dwarf_image_dir_path[PATH_MAX];
@@ -579,6 +965,10 @@ macho_try_dsym (struct backtrace_state *state,
   int dwarf_image_dir_valid = 0;
   struct dirent *directory_entry;
   char dwarf_filename[PATH_MAX];
+
+  *matched = 0;
+  *found_sym = 0;
+  *found_dwarf = 0;
 
   strncpy(dwarf_image_dir_path, dsym_filename, PATH_MAX);
   strncat(dwarf_image_dir_path, "/Contents/Resources/DWARF", PATH_MAX);
@@ -600,13 +990,28 @@ macho_try_dsym (struct backtrace_state *state,
       strncat(dwarf_filename, "/", PATH_MAX);
       strncat(dwarf_filename, directory_entry->d_name, PATH_MAX);
 
-      if (macho_try_dwarf (state, error_callback, data, fileline_fn,
-                           executable_uuid, base_address, dwarf_filename))
+      int dwarf_matched;
+      int dwarf_had_sym;
+      int dwarf_had_dwarf; // ;)
+      if (!macho_try_dwarf (state, error_callback, data, fileline_fn,
+                            executable_uuid, base_address, max_image_address,
+                            vmslide, dwarf_filename,
+                            &dwarf_matched, &dwarf_had_sym, &dwarf_had_dwarf))
+        goto end;
+
+      if (dwarf_matched)
         {
+          *matched = 1;
+          *found_sym = dwarf_had_sym;
+          *found_dwarf = dwarf_had_dwarf;
           ret = 1;
           goto end;
         }
     }
+
+  // No matching DWARF in this dSYM
+  ret = 1;
+  goto end;
 
 end:
   if (dwarf_image_dir_valid)
@@ -615,13 +1020,17 @@ end:
 }
 
 int
-backtrace_initialize (struct backtrace_state *state, int descriptor,
-                      backtrace_error_callback error_callback,
-                      void *data, fileline *fileline_fn)
+macho_add (struct backtrace_state *state,
+           backtrace_error_callback error_callback, void *data, int descriptor,
+           const char *filename, fileline *fileline_fn, int *found_sym,
+           int *found_dwarf)
 {
   uuid_t image_uuid;
   uint64_t image_file_base_address;
+  uint64_t image_file_max_address;
+  intptr_t image_vmslide = 0;
   uint64_t image_actual_base_address = 0;
+  uint64_t image_actual_max_address = 0;
 
   int ret = 0;
   char executable_full_path[PATH_MAX];
@@ -635,8 +1044,11 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
   struct dirent *directory_entry;
   char dsym_full_path[PATH_MAX];
 
+  *found_sym = 0;
+  *found_dwarf = 0;
+
   // Get full image filename
-  realpath (state->filename, executable_full_path);
+  realpath (filename, executable_full_path);
 
   // Find Mach-O commands list
   if (!macho_get_commands (state, descriptor, error_callback, data,
@@ -652,8 +1064,10 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
 
   // Now we need to find the in memory base address. Step one is to find out
   // what the executable thinks the base address is
-  if (!macho_get_base (state, descriptor, error_callback, data, &commands_view,
-                       &image_file_base_address))
+  if (!macho_get_addr_range (state, descriptor, error_callback, data,
+                             &commands_view,
+                             &image_file_base_address,
+                             &image_file_max_address))
     goto end;
 
   // Add ASLR offset
@@ -665,8 +1079,12 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
 
       if (strncmp (dyld_image_full_path, executable_full_path, PATH_MAX) == 0)
         {
+          image_vmslide = _dyld_get_image_vmaddr_slide (i);
           image_actual_base_address =
-              image_file_base_address + _dyld_get_image_vmaddr_slide (i);
+              image_file_base_address + image_vmslide;
+          image_actual_max_address =
+              image_file_max_address + image_vmslide;
+
           break;
         }
     }
@@ -716,18 +1134,31 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
           strncpy(dsym_full_path, executable_dirname, PATH_MAX);
           strncat(dsym_full_path, "/", PATH_MAX);
           strncat(dsym_full_path, directory_entry->d_name, PATH_MAX);
-          if (macho_try_dsym (state, error_callback, data,
-                              fileline_fn, &image_uuid,
-                              image_actual_base_address, dsym_full_path))
+
+          int matched;
+          int dsym_had_sym;
+          int dsym_had_dwarf;
+          if (!macho_try_dsym (state, error_callback, data,
+                               fileline_fn, &image_uuid,
+                               image_actual_base_address,
+                               image_actual_max_address, image_vmslide,
+                               dsym_full_path,
+                               &matched, &dsym_had_sym, &dsym_had_dwarf))
+            goto end;
+
+          if (matched)
             {
+              *found_sym = dsym_had_sym;
+              *found_dwarf = dsym_had_dwarf;
               ret = 1;
               goto end;
             }
         }
     }
 
-  error_callback (data, "executable file is missing an associated dSYM", -1);
-  ret = 0;
+  // No matching dSYM
+  ret = 1;
+  goto end;
 
 end:
   if (commands_view_valid)
@@ -736,5 +1167,140 @@ end:
   if (executable_dir_valid)
     closedir (executable_dir);
   return ret;
+}
+
+static int
+macho_symbol_search (const void *vkey, const void *ventry)
+{
+  const uintptr_t *key = (const uintptr_t *) vkey;
+  const struct macho_symbol *entry = (const struct macho_symbol *) ventry;
+  uintptr_t addr;
+
+  addr = *key;
+  if (addr < entry->addr)
+    return -1;
+  else if (addr >= entry->addr + entry->size)
+    return 1;
+  else
+    return 0;
+}
+
+static void
+macho_syminfo (struct backtrace_state *state ATTRIBUTE_UNUSED,
+               uintptr_t addr ATTRIBUTE_UNUSED,
+               backtrace_syminfo_callback callback ATTRIBUTE_UNUSED,
+               backtrace_error_callback error_callback, void *data)
+{
+  struct macho_syminfo_data *edata;
+  struct macho_symbol *sym = NULL;
+
+  if (!state->threaded)
+    {
+      for (edata = (struct macho_syminfo_data *) state->syminfo_data;
+           edata != NULL;
+           edata = edata->next)
+        {
+          sym = ((struct macho_symbol *)
+              bsearch (&addr, edata->symbols, edata->symbol_count,
+                       sizeof (struct macho_symbol), macho_symbol_search));
+          if (sym != NULL)
+            break;
+        }
+    }
+  else
+    {
+      struct macho_syminfo_data **pp;
+
+      pp = (struct macho_syminfo_data **) (void *) &state->syminfo_data;
+      while (1)
+        {
+          edata = backtrace_atomic_load_pointer (pp);
+          if (edata == NULL)
+            break;
+
+          sym = ((struct macho_symbol *)
+              bsearch (&addr, edata->symbols, edata->symbol_count,
+                       sizeof (struct macho_symbol), macho_symbol_search));
+          if (sym != NULL)
+            break;
+
+          pp = &edata->next;
+        }
+    }
+
+  if (sym == NULL)
+    callback (data, addr, NULL, 0, 0);
+  else
+    callback (data, addr, sym->name, sym->addr, sym->size);
+}
+
+
+static int
+macho_nodebug (struct backtrace_state *state ATTRIBUTE_UNUSED,
+               uintptr_t pc ATTRIBUTE_UNUSED,
+               backtrace_full_callback callback ATTRIBUTE_UNUSED,
+               backtrace_error_callback error_callback, void *data)
+{
+  error_callback (data, "no debug info in Mach-O executable", -1);
+  return 0;
+}
+
+static void
+macho_nosyms (struct backtrace_state *state ATTRIBUTE_UNUSED,
+              uintptr_t addr ATTRIBUTE_UNUSED,
+              backtrace_syminfo_callback callback ATTRIBUTE_UNUSED,
+              backtrace_error_callback error_callback, void *data)
+{
+  error_callback (data, "no symbol table in Mach-O executable", -1);
+}
+
+int
+backtrace_initialize (struct backtrace_state *state, int descriptor,
+                      backtrace_error_callback error_callback,
+                      void *data, fileline *fileline_fn)
+{
+  int ret;
+  fileline macho_fileline_fn = macho_nodebug;
+  int found_sym = 0;
+  int found_dwarf = 0;
+
+  // Add main executable
+  if (!macho_add (state, error_callback, data, descriptor, state->filename,
+                  &macho_fileline_fn, &found_sym, &found_dwarf))
+    return 0;
+
+  // TODO: scan dyld images
+
+  if (!state->threaded)
+    {
+      if (found_sym)
+        state->syminfo_fn = macho_syminfo;
+      else if (state->syminfo_fn == NULL)
+        state->syminfo_fn = macho_nosyms;
+    }
+  else
+    {
+      if (found_sym)
+        backtrace_atomic_store_pointer (&state->syminfo_fn, macho_syminfo);
+      else
+        (void) __sync_bool_compare_and_swap (&state->syminfo_fn, NULL,
+                                             macho_nosyms);
+    }
+
+  if (!state->threaded)
+    {
+      if (state->fileline_fn == NULL || state->fileline_fn == macho_nodebug)
+        *fileline_fn = macho_fileline_fn;
+    }
+  else
+    {
+      fileline current_fn;
+
+      current_fn = backtrace_atomic_load_pointer (&state->fileline_fn);
+      if (current_fn == NULL || current_fn == macho_nodebug)
+        *fileline_fn = macho_fileline_fn;
+    }
+
+  return 1;
 }
 

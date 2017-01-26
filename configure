@@ -11344,6 +11344,7 @@ pecoff) FORMAT_FILE="pecoff.lo"
         backtrace_supports_data=no
 	;;
 macho*) FORMAT_FILE="macho.lo"
+        backtrace_supports_data=no
     ;;
 *) { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: could not determine output file type" >&5
 $as_echo "$as_me: WARNING: could not determine output file type" >&2;}
