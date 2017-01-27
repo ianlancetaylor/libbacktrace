@@ -33,6 +33,20 @@ POSSIBILITY OF SUCH DAMAGE.  */
 
 #include "config.h"
 
+// We can't use autotools to detect the pointer width of our program because
+// we may be building a fat Mach-O file containing both 32-bit and 64-bit
+// variants. However Mach-O ron a limited set of platforms
+
+#if defined(__MACH__)
+#if defined(__LP64__)
+#define BACKTRACE_BITS 64
+#else
+#define BACKTRACE_BITS 32
+#endif
+#else
+#error Attempting to build Mach-O support on incorrect platform
+#endif
+
 #include <sys/types.h>
 #include <sys/syslimits.h>
 #include <string.h>
@@ -53,7 +67,6 @@ struct macho_commands_view
     uint32_t commands_count;
     uint32_t commands_total_size;
     int bytes_swapped;
-    int bits;
 };
 
 enum debug_section
@@ -78,7 +91,7 @@ static const char *const debug_section_names[DEBUG_MAX] =
 struct found_dwarf_section
 {
     uint32_t file_offset;
-    uint64_t file_size;
+    uintptr_t file_size;
     const unsigned char *data;
 };
 
@@ -148,6 +161,22 @@ macho_file_to_host_u64 (int file_bytes_swapped, uint64_t input)
     }
 }
 
+#if BACKTRACE_BITS == 64
+#define macho_file_to_host_usize macho_file_to_host_u64
+typedef struct mach_header_64 mach_header_native_t;
+#define LC_SEGMENT_NATIVE LC_SEGMENT_64
+typedef struct segment_command_64 segment_command_native_t;
+typedef struct nlist_64 nlist_native_t;
+typedef struct section_64 section_native_t;
+#else /* BACKTRACE_BITS == 32 */
+#define macho_file_to_host_usize macho_file_to_host_u32
+typedef struct mach_header mach_header_native_t;
+#define LC_SEGMENT_NATIVE LC_SEGMENT
+typedef struct segment_command segment_command_native_t;
+typedef struct nlist nlist_native_t;
+typedef struct section section_native_t;
+#endif
+
 int
 macho_get_commands (struct backtrace_state *state, int descriptor,
                     backtrace_error_callback error_callback,
@@ -159,56 +188,45 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
   struct backtrace_view file_header_view;
   int file_header_view_valid = 0;
 
-  if (!backtrace_get_view (state, descriptor, 0, sizeof (struct mach_header_64),
+  if (!backtrace_get_view (state, descriptor, 0, sizeof (mach_header_native_t),
                            error_callback, data, &file_header_view))
     goto end;
   file_header_view_valid = 1;
 
   switch (*(uint32_t *) file_header_view.data)
     {
+#if BACKTRACE_BITS == 32
       case MH_MAGIC:
-        commands_view->bits = 32;
-      commands_view->bytes_swapped = 0;
+        commands_view->bytes_swapped = 0;
       break;
       case MH_CIGAM:
-        commands_view->bits = 32;
-      commands_view->bytes_swapped = 1;
+        commands_view->bytes_swapped = 1;
       break;
+#endif
+#if BACKTRACE_BITS == 64
       case MH_MAGIC_64:
-        commands_view->bits = 64;
-      commands_view->bytes_swapped = 0;
+        commands_view->bytes_swapped = 0;
       break;
       case MH_CIGAM_64:
-        commands_view->bits = 64;
-      commands_view->bytes_swapped = 1;
+        commands_view->bytes_swapped = 1;
       break;
+#endif
       default:
-        error_callback (data, "executable file is not a Mach-O image", 0);
+        error_callback (
+            data,
+            "executable file is not a Mach-O image with the correct pointer size",
+            0);
       goto end;
     }
 
-  if (commands_view->bits == 64)
-    {
-      const struct mach_header_64 *file_header = file_header_view.data;
-      commands_view->commands_count =
-          macho_file_to_host_u32 (commands_view->bytes_swapped,
-                                  file_header->ncmds);
-      commands_view->commands_total_size =
-          macho_file_to_host_u32 (commands_view->bytes_swapped,
-                                  file_header->sizeofcmds);
-      commands_offset = sizeof (struct mach_header_64);
-    }
-  else
-    { /* file_bits == 32 */
-      const struct mach_header *file_header = file_header_view.data;
-      commands_view->commands_count =
-          macho_file_to_host_u32 (commands_view->bytes_swapped,
-                                  file_header->ncmds);
-      commands_view->commands_total_size =
-          macho_file_to_host_u32 (commands_view->bytes_swapped,
-                                  file_header->sizeofcmds);
-      commands_offset = sizeof (struct mach_header);
-    }
+  const mach_header_native_t *file_header = file_header_view.data;
+  commands_view->commands_count =
+      macho_file_to_host_u32 (commands_view->bytes_swapped,
+                              file_header->ncmds);
+  commands_view->commands_total_size =
+      macho_file_to_host_u32 (commands_view->bytes_swapped,
+                              file_header->sizeofcmds);
+  commands_offset = sizeof (mach_header_native_t);
 
   if (!backtrace_get_view (state, descriptor, commands_offset,
                            commands_view->commands_total_size, error_callback,
@@ -271,7 +289,7 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED,
       offset += command.cmdsize;
     }
 
-  error_callback (data, "executable file is missing an identifying uuid", 0);
+  error_callback (data, "executable file is missing an identifying UUID", 0);
   return 0;
 }
 
@@ -284,7 +302,7 @@ macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
                       int descriptor ATTRIBUTE_UNUSED,
                       backtrace_error_callback error_callback,
                       void *data, struct macho_commands_view *commands_view,
-                      uint64_t *base_address, uint64_t *max_address)
+                      uintptr_t *base_address, uintptr_t *max_address)
 {
   size_t offset = 0;
   int found_text = 0;
@@ -310,9 +328,9 @@ macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
       command.cmdsize = macho_file_to_host_u32 (commands_view->bytes_swapped,
                                                 raw_command->cmdsize);
 
-      if (command.cmd == LC_SEGMENT)
+      if (command.cmd == LC_SEGMENT_NATIVE)
         {
-          if (offset + sizeof (struct segment_command)
+          if (offset + sizeof (segment_command_native_t)
               > commands_view->commands_total_size)
             {
               error_callback (data,
@@ -321,52 +339,19 @@ macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
               return 0;
             }
 
-          const struct segment_command *raw_segment =
-              (const struct segment_command *) raw_command;
+          const segment_command_native_t *raw_segment =
+              (segment_command_native_t *) raw_command;
 
-          uint32_t segment_vmaddr = macho_file_to_host_u32 (
+          uintptr_t segment_vmaddr = macho_file_to_host_usize (
               commands_view->bytes_swapped, raw_segment->vmaddr);
-          uint32_t segment_vmsize = macho_file_to_host_u32 (
+          uintptr_t segment_vmsize = macho_file_to_host_usize (
               commands_view->bytes_swapped, raw_segment->vmsize);
-          uint32_t segment_maxaddr = segment_vmaddr + segment_vmsize;
+          uintptr_t segment_maxaddr = segment_vmaddr + segment_vmsize;
 
           if (strncmp (raw_segment->segname, "__TEXT",
                        sizeof (raw_segment->segname)) == 0)
             {
-              uint32_t text_fileoff = macho_file_to_host_u32 (
-                  commands_view->bytes_swapped, raw_segment->fileoff);
-              *base_address = segment_vmaddr - text_fileoff;
-
-              found_text = 1;
-            }
-
-          if (segment_maxaddr > *max_address)
-            *max_address = segment_maxaddr;
-        }
-      else if (command.cmd == LC_SEGMENT_64)
-        {
-          if (offset + sizeof (struct segment_command_64)
-              > commands_view->commands_total_size)
-            {
-              error_callback (data,
-                              "executable file contains out of range command offset",
-                              0);
-              return 0;
-            }
-
-          struct segment_command_64 *raw_segment =
-              (struct segment_command_64 *) raw_command;
-
-          uint64_t segment_vmaddr = macho_file_to_host_u64 (
-              commands_view->bytes_swapped, raw_segment->vmaddr);
-          uint64_t segment_vmsize = macho_file_to_host_u64 (
-              commands_view->bytes_swapped, raw_segment->vmsize);
-          uint64_t segment_maxaddr = segment_vmaddr + segment_vmsize;
-
-          if (strncmp (raw_segment->segname, "__TEXT",
-                       sizeof (raw_segment->segname)) == 0)
-            {
-              uint64_t text_fileoff = macho_file_to_host_u64 (
+              uintptr_t text_fileoff = macho_file_to_host_usize (
                   commands_view->bytes_swapped, raw_segment->fileoff);
               *base_address = segment_vmaddr - text_fileoff;
 
@@ -473,13 +458,9 @@ macho_add_symtab (struct backtrace_state *state,
           uint32_t string_table_size = macho_file_to_host_u32 (
               commands_view->bytes_swapped, symtab_command->strsize);
 
-          size_t symbol_entry_size =
-              (commands_view->bits == 32) ? sizeof (struct nlist)
-                                          : sizeof (struct nlist_64);
-
 
           if (!backtrace_get_view (state, descriptor, symbol_table_offset,
-                                   symbol_count * symbol_entry_size,
+                                   symbol_count * sizeof (nlist_native_t),
                                    error_callback, data, &symtab_view))
             goto end;
           symtab_view_valid = 1;
@@ -490,94 +471,87 @@ macho_add_symtab (struct backtrace_state *state,
             goto end;
           strtab_view_valid = 1;
 
-          if (commands_view->bits == 32)
-            {
-              goto end; // TODO
-            }
-          else /* commands_view->bits == 64 */
-            {
-              // Count functions first
-              size_t function_count = 0;
+          // Count functions first
+          size_t function_count = 0;
 
-              for (uint32_t j = 0; j < symbol_count; j++)
+          for (uint32_t j = 0; j < symbol_count; j++)
+            {
+              const nlist_native_t *raw_sym =
+                  ((const nlist_native_t *) symtab_view.data) + j;
+
+              if (macho_symbol_type_relevant (raw_sym->n_type))
                 {
-                  const struct nlist_64 *raw_sym =
-                      ((const struct nlist_64 *) symtab_view.data) + j;
-
-                  if(macho_symbol_type_relevant (raw_sym->n_type))
-                    {
-                      function_count += 1;
-                    }
+                  function_count += 1;
                 }
+            }
 
-              // Allocate space for the:
-              //  (a) macho_syminfo_data for this image
-              //  (b) macho_symbol entries
-              syminfo_data =
-                  backtrace_alloc (state,
-                                   sizeof (struct macho_syminfo_data),
-                                   error_callback, data);
+          // Allocate space for the:
+          //  (a) macho_syminfo_data for this image
+          //  (b) macho_symbol entries
+          syminfo_data =
+              backtrace_alloc (state,
+                               sizeof (struct macho_syminfo_data),
+                               error_callback, data);
 
-              syminfo_data->symbols = backtrace_alloc (
-                  state, function_count * sizeof (struct macho_symbol),
-                  error_callback, data);
-              syminfo_data->symbol_count = function_count;
-              syminfo_data->next = NULL;
-              syminfo_data->min_addr = base_address;
-              syminfo_data->max_addr = max_image_address;
+          syminfo_data->symbols = backtrace_alloc (
+              state, function_count * sizeof (struct macho_symbol),
+              error_callback, data);
+          syminfo_data->symbol_count = function_count;
+          syminfo_data->next = NULL;
+          syminfo_data->min_addr = base_address;
+          syminfo_data->max_addr = max_image_address;
 
-              uint32_t syminfo_index = 0;
-              for (uint32_t symtab_index = 0;
-                   symtab_index < symbol_count; symtab_index++)
+          size_t syminfo_index = 0;
+          for (uint32_t symtab_index = 0;
+               symtab_index < symbol_count; symtab_index++)
+            {
+              const nlist_native_t *raw_sym =
+                  ((const nlist_native_t *) symtab_view.data) +
+                  symtab_index;
+
+              if (macho_symbol_type_relevant (raw_sym->n_type))
                 {
-                  const struct nlist_64 *raw_sym =
-                      ((const struct nlist_64 *) symtab_view.data) +
-                      symtab_index;
+                  syminfo_data->symbols[syminfo_index].addr =
+                      macho_file_to_host_usize (commands_view->bytes_swapped,
+                                                raw_sym->n_value) + vmslide;
 
-                  if (macho_symbol_type_relevant (raw_sym->n_type))
+                  size_t strtab_index = macho_file_to_host_u32 (
+                      commands_view->bytes_swapped,
+                      raw_sym->n_un.n_strx);
+
+                  // Check the range of the supposed "string" we've been
+                  // given
+                  if (strtab_index >= string_table_size)
                     {
-                      syminfo_data->symbols[syminfo_index].addr =
-                          macho_file_to_host_u64 (commands_view->bytes_swapped,
-                                                  raw_sym->n_value) + vmslide;
-
-                      size_t strtab_index = macho_file_to_host_u32 (
-                          commands_view->bytes_swapped,
-                          raw_sym->n_un.n_strx);
-                      // Check the range of the supposed "string" we've been
-                      // given
-
-                      if (strtab_index >= string_table_size)
-                        {
-                          error_callback (
-                              data,
-                              "dSYM file contains out of range string table index",
-                              0);
-                          goto end;
-                        }
-
-                      const char *name = strtab_view.data + strtab_index;
-                      size_t max_len_plus_one =
-                          string_table_size - strtab_index;
-
-                      if (strnlen (name, max_len_plus_one) >= max_len_plus_one)
-                        {
-                          error_callback (
-                              data,
-                              "dSYM file contains unterminated string",
-                              0);
-                          goto end;
-                        }
-
-                      // Remove underscore prefixes
-                      if (name[0] == '_')
-                        {
-                          name = name + 1;
-                        }
-
-                      syminfo_data->symbols[syminfo_index].name = name;
-
-                      syminfo_index += 1;
+                      error_callback (
+                          data,
+                          "dSYM file contains out of range string table index",
+                          0);
+                      goto end;
                     }
+
+                  const char *name = strtab_view.data + strtab_index;
+                  size_t max_len_plus_one =
+                      string_table_size - strtab_index;
+
+                  if (strnlen (name, max_len_plus_one) >= max_len_plus_one)
+                    {
+                      error_callback (
+                          data,
+                          "dSYM file contains unterminated string",
+                          0);
+                      goto end;
+                    }
+
+                  // Remove underscore prefixes
+                  if (name[0] == '_')
+                    {
+                      name = name + 1;
+                    }
+
+                  syminfo_data->symbols[syminfo_index].name = name;
+
+                  syminfo_index += 1;
                 }
             }
 
@@ -587,7 +561,7 @@ macho_add_symtab (struct backtrace_state *state,
                            macho_symbol_compare_addr);
 
           // Calculate symbol sizes
-          for (size_t syminfo_index = 0;
+          for (syminfo_index = 0;
                syminfo_index < syminfo_data->symbol_count; syminfo_index++)
             {
               if (syminfo_index + 1 < syminfo_data->symbol_count)
@@ -689,7 +663,12 @@ macho_try_dwarf (struct backtrace_state *state,
 
   if (!macho_get_commands (state, dwarf_descriptor, error_callback, data,
                            &commands_view))
-    goto end;
+    {
+      // Failing to read the header here is fine, because this dSYM may be
+      // for a different architecture
+      ret = 1;
+      goto end;
+    }
   commands_view_valid = 1;
 
   // Get dSYM UUID and compare
@@ -716,8 +695,8 @@ macho_try_dwarf (struct backtrace_state *state,
 
   // Get DWARF sections
   struct found_dwarf_section dwarf_sections[DEBUG_MAX];
-  uint64_t min_dwarf_offset = 0;
-  uint64_t max_dwarf_offset = 0;
+  uintptr_t min_dwarf_offset = 0;
+  uintptr_t max_dwarf_offset = 0;
   memset (dwarf_sections, 0, sizeof (dwarf_sections));
   offset = 0;
   for (uint32_t i = 0; i < commands_view.commands_count; i++)
@@ -737,160 +716,83 @@ macho_try_dwarf (struct backtrace_state *state,
       command.cmdsize = macho_file_to_host_u32 (commands_view.bytes_swapped,
                                                 raw_command->cmdsize);
 
-      if (command.cmd == LC_SEGMENT || command.cmd == LC_SEGMENT_64)
+      if (command.cmd == LC_SEGMENT_NATIVE)
         {
           uint32_t section_count;
           size_t section_offset;
 
-          if (command.cmd == LC_SEGMENT)
+          if (offset + sizeof (segment_command_native_t)
+              > commands_view.commands_total_size)
             {
-              if (offset + sizeof (struct segment_command)
-                  > commands_view.commands_total_size)
-                {
-                  error_callback (data,
-                                  "dSYM file contains out of range command offset",
-                                  0);
-                  goto end;
-                }
-
-              const struct segment_command *raw_segment =
-                  (const struct segment_command *) raw_command;
-
-              if (strncmp (raw_segment->segname, "__DWARF",
-                           sizeof (raw_segment->segname)) == 0)
-                {
-                  section_count = macho_file_to_host_u32 (
-                      commands_view.bytes_swapped,
-                      raw_segment->nsects);
-
-                  section_offset = offset + sizeof (struct segment_command);
-
-                  // Search sections for relevant DWARF section names
-                  for (uint32_t j = 0; j < section_count; j++)
-                    {
-                      if (section_offset + sizeof (struct section) >
-                          commands_view.commands_total_size)
-                        {
-                          error_callback (data,
-                                          "dSYM file contains out of range command offset",
-                                          0);
-                          goto end;
-                        }
-
-                      const struct section *raw_section =
-                          commands_view.view.data + section_offset;
-
-                      for (int k = 0; k < DEBUG_MAX; k++)
-                        {
-                          if (strncmp (raw_section->sectname,
-                                       debug_section_names[k],
-                                       sizeof (raw_section->sectname)) == 0)
-                            {
-                              *found_dwarf = 1;
-
-                              dwarf_sections[k].file_offset =
-                                  macho_file_to_host_u32 (
-                                      commands_view.bytes_swapped,
-                                      raw_section->offset);
-                              dwarf_sections[k].file_size = macho_file_to_host_u32 (
-                                  commands_view.bytes_swapped,
-                                  raw_section->size);
-
-                              if (min_dwarf_offset == 0 ||
-                                  dwarf_sections[k].file_offset <
-                                  min_dwarf_offset)
-                                min_dwarf_offset = dwarf_sections[k].file_offset;
-
-                              uint64_t dwarf_section_end =
-                                  dwarf_sections[k].file_offset +
-                                  dwarf_sections[k].file_size;
-                              if (dwarf_section_end > max_dwarf_offset)
-                                max_dwarf_offset = dwarf_section_end;
-
-                              break;
-                            }
-                        }
-
-                      section_offset += sizeof (struct section);
-                    }
-
-                  break;
-                }
+              error_callback (data,
+                              "dSYM file contains out of range command offset",
+                              0);
+              goto end;
             }
-          else
-            { /* command.cmd == LC_SEGMENT_64 */
-              if (offset + sizeof (struct segment_command_64)
-                  > commands_view.commands_total_size)
+
+          const segment_command_native_t *raw_segment =
+              (const segment_command_native_t *) raw_command;
+
+          if (strncmp (raw_segment->segname, "__DWARF",
+                       sizeof (raw_segment->segname)) == 0)
+            {
+              section_count = macho_file_to_host_u32 (
+                  commands_view.bytes_swapped,
+                  raw_segment->nsects);
+
+              section_offset = offset + sizeof (segment_command_native_t);
+
+              // Search sections for relevant DWARF section names
+              for (uint32_t j = 0; j < section_count; j++)
                 {
-                  error_callback (data,
-                                  "dSYM file contains out of range command offset",
-                                  0);
-                  goto end;
-                }
-
-              const struct segment_command_64 *raw_segment =
-                  (const struct segment_command_64 *) raw_command;
-
-              if (strncmp (raw_segment->segname, "__DWARF",
-                           sizeof (raw_segment->segname)) == 0)
-                {
-                  section_count = macho_file_to_host_u32 (
-                      commands_view.bytes_swapped,
-                      raw_segment->nsects);
-
-                  section_offset = offset + sizeof (struct segment_command_64);
-
-                  // Search sections for relevant DWARF section names
-                  for (uint32_t j = 0; j < section_count; j++)
+                  if (section_offset + sizeof (section_native_t) >
+                      commands_view.commands_total_size)
                     {
-                      if (section_offset + sizeof (struct section_64) >
-                          commands_view.commands_total_size)
+                      error_callback (data,
+                                      "dSYM file contains out of range command offset",
+                                      0);
+                      goto end;
+                    }
+
+                  const section_native_t *raw_section =
+                      commands_view.view.data + section_offset;
+
+                  for (int k = 0; k < DEBUG_MAX; k++)
+                    {
+                      if (strncmp (raw_section->sectname,
+                                   debug_section_names[k],
+                                   sizeof (raw_section->sectname)) == 0)
                         {
-                          error_callback (data,
-                                          "dSYM file contains out of range command offset",
-                                          0);
-                          goto end;
-                        }
+                          *found_dwarf = 1;
 
-                      const struct section_64 *raw_section =
-                          commands_view.view.data + section_offset;
-
-                      for (int k = 0; k < DEBUG_MAX; k++)
-                        {
-                          if (strncmp (raw_section->sectname,
-                                       debug_section_names[k],
-                                       sizeof (raw_section->sectname)) == 0)
-                            {
-                              *found_dwarf = 1;
-
-                              dwarf_sections[k].file_offset =
-                                  macho_file_to_host_u32 (
-                                      commands_view.bytes_swapped,
-                                      raw_section->offset);
-                              dwarf_sections[k].file_size = macho_file_to_host_u64 (
+                          dwarf_sections[k].file_offset =
+                              macho_file_to_host_u32 (
+                                  commands_view.bytes_swapped,
+                                  raw_section->offset);
+                          dwarf_sections[k].file_size =
+                              macho_file_to_host_usize (
                                   commands_view.bytes_swapped,
                                   raw_section->size);
 
-                              if (min_dwarf_offset == 0 ||
-                                  dwarf_sections[k].file_offset <
-                                  min_dwarf_offset)
-                                min_dwarf_offset = dwarf_sections[k].file_offset;
+                          if (min_dwarf_offset == 0 ||
+                              dwarf_sections[k].file_offset <
+                              min_dwarf_offset)
+                            min_dwarf_offset = dwarf_sections[k].file_offset;
 
-                              uint64_t dwarf_section_end =
-                                  dwarf_sections[k].file_offset +
-                                  dwarf_sections[k].file_size;
-                              if (dwarf_section_end > max_dwarf_offset)
-                                max_dwarf_offset = dwarf_section_end;
+                          uintptr_t dwarf_section_end =
+                              dwarf_sections[k].file_offset +
+                              dwarf_sections[k].file_size;
+                          if (dwarf_section_end > max_dwarf_offset)
+                            max_dwarf_offset = dwarf_section_end;
 
-                              break;
-                            }
+                          break;
                         }
-
-                      section_offset += sizeof (struct section_64);
                     }
 
-                  break;
+                  section_offset += sizeof (section_native_t);
                 }
+
+              break;
             }
         }
 
@@ -904,7 +806,7 @@ macho_try_dwarf (struct backtrace_state *state,
       goto end;
     }
 
-  if (!backtrace_get_view (state, dwarf_descriptor, min_dwarf_offset,
+  if (!backtrace_get_view (state, dwarf_descriptor, (off_t) min_dwarf_offset,
                            max_dwarf_offset - min_dwarf_offset, error_callback,
                            data, &dwarf_view))
     goto end;
@@ -944,8 +846,7 @@ end:
   if (dwarf_descriptor_valid)
     backtrace_close (dwarf_descriptor, error_callback, data);
   if (commands_view_valid)
-    backtrace_release_view (state, &commands_view.view, error_callback,
-                            data);
+    backtrace_release_view (state, &commands_view.view, error_callback, data);
   if (dwarf_view_valid)
     backtrace_release_view (state, &dwarf_view, error_callback, data);
   return ret;
@@ -1026,11 +927,11 @@ macho_add (struct backtrace_state *state,
            int *found_dwarf)
 {
   uuid_t image_uuid;
-  uint64_t image_file_base_address;
-  uint64_t image_file_max_address;
+  uintptr_t image_file_base_address;
+  uintptr_t image_file_max_address;
   intptr_t image_vmslide = 0;
-  uint64_t image_actual_base_address = 0;
-  uint64_t image_actual_max_address = 0;
+  uintptr_t image_actual_base_address = 0;
+  uintptr_t image_actual_max_address = 0;
 
   int ret = 0;
   char executable_full_path[PATH_MAX];
@@ -1186,10 +1087,11 @@ macho_symbol_search (const void *vkey, const void *ventry)
 }
 
 static void
-macho_syminfo (struct backtrace_state *state ATTRIBUTE_UNUSED,
-               uintptr_t addr ATTRIBUTE_UNUSED,
-               backtrace_syminfo_callback callback ATTRIBUTE_UNUSED,
-               backtrace_error_callback error_callback, void *data)
+macho_syminfo (struct backtrace_state *state,
+               uintptr_t addr,
+               backtrace_syminfo_callback callback,
+               backtrace_error_callback error_callback ATTRIBUTE_UNUSED,
+               void *data)
 {
   struct macho_syminfo_data *edata;
   struct macho_symbol *sym = NULL;
@@ -1200,11 +1102,14 @@ macho_syminfo (struct backtrace_state *state ATTRIBUTE_UNUSED,
            edata != NULL;
            edata = edata->next)
         {
-          sym = ((struct macho_symbol *)
-              bsearch (&addr, edata->symbols, edata->symbol_count,
-                       sizeof (struct macho_symbol), macho_symbol_search));
-          if (sym != NULL)
-            break;
+          if (addr >= edata->min_addr && addr <= edata->max_addr)
+            {
+              sym = ((struct macho_symbol *)
+                  bsearch (&addr, edata->symbols, edata->symbol_count,
+                           sizeof (struct macho_symbol), macho_symbol_search));
+              if (sym != NULL)
+                break;
+            }
         }
     }
   else
@@ -1218,11 +1123,14 @@ macho_syminfo (struct backtrace_state *state ATTRIBUTE_UNUSED,
           if (edata == NULL)
             break;
 
-          sym = ((struct macho_symbol *)
-              bsearch (&addr, edata->symbols, edata->symbol_count,
-                       sizeof (struct macho_symbol), macho_symbol_search));
-          if (sym != NULL)
-            break;
+          if (addr >= edata->min_addr && addr <= edata->max_addr)
+            {
+              sym = ((struct macho_symbol *)
+                  bsearch (&addr, edata->symbols, edata->symbol_count,
+                           sizeof (struct macho_symbol), macho_symbol_search));
+              if (sym != NULL)
+                break;
+            }
 
           pp = &edata->next;
         }
