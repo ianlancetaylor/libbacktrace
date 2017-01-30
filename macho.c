@@ -207,7 +207,8 @@ macho_get_view (struct backtrace_state *state, int descriptor,
 int
 macho_get_commands (struct backtrace_state *state, int descriptor,
                     backtrace_error_callback error_callback,
-                    void *data, struct macho_commands_view *commands_view)
+                    void *data, struct macho_commands_view *commands_view,
+                    int* incompatible)
 {
   int ret = 0;
   int is_fat = 0;
@@ -215,6 +216,8 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
   int file_header_view_valid = 0;
   struct backtrace_view fat_archs_view;
   int fat_archs_view_valid = 0;
+
+  *incompatible = 0;
 
   if (!backtrace_get_view (state, descriptor, 0, sizeof (mach_header_native_t),
                            error_callback, data, &file_header_view))
@@ -230,6 +233,11 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
       case MH_CIGAM:
         commands_view->bytes_swapped = 1;
       break;
+      case MH_MAGIC_64:
+      case MH_CIGAM_64:
+        *incompatible = 1;
+        goto end;
+      break;
 #endif
 #if BACKTRACE_BITS == 64
       case MH_MAGIC_64:
@@ -238,14 +246,19 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
       case MH_CIGAM_64:
         commands_view->bytes_swapped = 1;
       break;
+      case MH_MAGIC:
+      case MH_CIGAM:
+        *incompatible = 1;
+        goto end;
+      break;
 #endif
       case FAT_MAGIC:
         is_fat = 1;
-      commands_view->bytes_swapped = 0;
+        commands_view->bytes_swapped = 0;
       break;
       case FAT_CIGAM:
         is_fat = 1;
-      commands_view->bytes_swapped = 1;
+        commands_view->bytes_swapped = 1;
       break;
       default:
         goto end;
@@ -286,7 +299,10 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
         }
 
       if (native_slice_offset == 0)
-        goto end;
+        {
+          *incompatible = 1;
+          goto end;
+        }
 
       backtrace_release_view (state, &file_header_view, error_callback, data);
       file_header_view_valid = 0;
@@ -777,12 +793,16 @@ macho_try_dwarf (struct backtrace_state *state,
     goto end;
   dwarf_descriptor_valid = 1;
 
+  int incompatible;
   if (!macho_get_commands (state, dwarf_descriptor, error_callback, data,
-                           &commands_view))
+                           &commands_view, &incompatible))
     {
       // Failing to read the header here is fine, because this dSYM may be
       // for a different architecture
-      ret = 1;
+      if (incompatible)
+        {
+          ret = 1;
+        }
       goto end;
     }
   commands_view_valid = 1;
@@ -1039,18 +1059,16 @@ end:
 int
 macho_add (struct backtrace_state *state,
            backtrace_error_callback error_callback, void *data, int descriptor,
-           const char *filename, fileline *fileline_fn, int *found_sym,
-           int *found_dwarf)
+           const char *filename, fileline *fileline_fn, intptr_t vmslide,
+           int *found_sym, int *found_dwarf)
 {
   uuid_t image_uuid;
   uintptr_t image_file_base_address;
   uintptr_t image_file_max_address;
-  intptr_t image_vmslide = 0;
   uintptr_t image_actual_base_address = 0;
   uintptr_t image_actual_max_address = 0;
 
   int ret = 0;
-  char executable_full_path[PATH_MAX];
   struct macho_commands_view commands_view;
   int commands_view_valid = 0;
   uint32_t dyld_image_count;
@@ -1064,12 +1082,10 @@ macho_add (struct backtrace_state *state,
   *found_sym = 0;
   *found_dwarf = 0;
 
-  // Get full image filename
-  realpath (filename, executable_full_path);
-
   // Find Mach-O commands list
+  int incompatible;
   if (!macho_get_commands (state, descriptor, error_callback, data,
-                           &commands_view))
+                           &commands_view, &incompatible))
     goto end;
   commands_view_valid = 1;
 
@@ -1087,24 +1103,10 @@ macho_add (struct backtrace_state *state,
                              &image_file_max_address))
     goto end;
 
-  // Add ASLR offset
-  dyld_image_count = _dyld_image_count ();
-  for (uint32_t i = 0; i < dyld_image_count; i++)
-    {
-      char dyld_image_full_path[PATH_MAX];
-      realpath (_dyld_get_image_name (i), dyld_image_full_path);
-
-      if (strncmp (dyld_image_full_path, executable_full_path, PATH_MAX) == 0)
-        {
-          image_vmslide = _dyld_get_image_vmaddr_slide (i);
-          image_actual_base_address =
-              image_file_base_address + image_vmslide;
-          image_actual_max_address =
-              image_file_max_address + image_vmslide;
-
-          break;
-        }
-    }
+  image_actual_base_address =
+      image_file_base_address + vmslide;
+  image_actual_max_address =
+      image_file_max_address + vmslide;
 
   if (image_actual_base_address == 0)
     {
@@ -1113,7 +1115,7 @@ macho_add (struct backtrace_state *state,
     }
 
   // Look for dSYM in our executable's directory
-  strncpy(executable_dirname, executable_full_path, PATH_MAX);
+  strncpy(executable_dirname, filename, PATH_MAX);
   filename_len = strlen (executable_dirname);
   for (ssize_t i = filename_len - 1; i >= 0; i--)
     {
@@ -1158,7 +1160,7 @@ macho_add (struct backtrace_state *state,
           if (!macho_try_dsym (state, error_callback, data,
                                fileline_fn, &image_uuid,
                                image_actual_base_address,
-                               image_actual_max_address, image_vmslide,
+                               image_actual_max_address, vmslide,
                                dsym_full_path,
                                &matched, &dsym_had_sym, &dsym_had_dwarf))
             goto end;
@@ -1288,12 +1290,37 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
   int found_sym = 0;
   int found_dwarf = 0;
 
-  // Add main executable
-  if (!macho_add (state, error_callback, data, descriptor, state->filename,
-                  &macho_fileline_fn, &found_sym, &found_dwarf))
-    return 0;
+  // Add all loaded images
+  uint32_t loaded_image_count = _dyld_image_count ();
+  for (uint32_t i = 0; i < loaded_image_count; i++)
+    {
+      int current_found_sym;
+      int current_found_dwarf;
+      int current_descriptor;
 
-  // TODO: scan dyld images
+      intptr_t current_vmslide = _dyld_get_image_vmaddr_slide (i);
+      const char* current_name = _dyld_get_image_name (i);
+
+      if(current_name == NULL)
+        continue;
+
+      if (!(current_descriptor =
+                backtrace_open (current_name, error_callback, data, NULL)))
+        {
+          continue;
+        }
+
+      if (!macho_add (state, error_callback, data, current_descriptor,
+                 current_name, &macho_fileline_fn, current_vmslide,
+                 &current_found_sym, &current_found_dwarf))
+        {
+          return 0;
+        }
+
+      backtrace_close (current_descriptor, error_callback, data);
+      found_sym = found_sym || current_found_sym;
+      found_dwarf = found_dwarf || current_found_dwarf;
+    }
 
   if (!state->threaded)
     {
