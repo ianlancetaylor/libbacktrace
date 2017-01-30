@@ -208,7 +208,7 @@ int
 macho_get_commands (struct backtrace_state *state, int descriptor,
                     backtrace_error_callback error_callback,
                     void *data, struct macho_commands_view *commands_view,
-                    int* incompatible)
+                    int *incompatible)
 {
   int ret = 0;
   int is_fat = 0;
@@ -236,7 +236,7 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
       case MH_MAGIC_64:
       case MH_CIGAM_64:
         *incompatible = 1;
-        goto end;
+      goto end;
       break;
 #endif
 #if BACKTRACE_BITS == 64
@@ -254,11 +254,11 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
 #endif
       case FAT_MAGIC:
         is_fat = 1;
-        commands_view->bytes_swapped = 0;
+      commands_view->bytes_swapped = 0;
       break;
       case FAT_CIGAM:
         is_fat = 1;
-        commands_view->bytes_swapped = 1;
+      commands_view->bytes_swapped = 1;
       break;
       default:
         goto end;
@@ -1299,9 +1299,9 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
       int current_descriptor;
 
       intptr_t current_vmslide = _dyld_get_image_vmaddr_slide (i);
-      const char* current_name = _dyld_get_image_name (i);
+      const char *current_name = _dyld_get_image_name (i);
 
-      if(current_name == NULL)
+      if (current_name == NULL)
         continue;
 
       if (!(current_descriptor =
@@ -1311,8 +1311,8 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
         }
 
       if (!macho_add (state, error_callback, data, current_descriptor,
-                 current_name, &macho_fileline_fn, current_vmslide,
-                 &current_found_sym, &current_found_dwarf))
+                      current_name, &macho_fileline_fn, current_vmslide,
+                      &current_found_sym, &current_found_dwarf))
         {
           return 0;
         }
