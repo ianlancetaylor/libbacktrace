@@ -35,7 +35,8 @@ POSSIBILITY OF SUCH DAMAGE.  */
 
 // We can't use autotools to detect the pointer width of our program because
 // we may be building a fat Mach-O file containing both 32-bit and 64-bit
-// variants. However Mach-O ron a limited set of platforms
+// variants. However Mach-O runs a limited set of platforms so detection
+// via preprocessor is not difficult.
 
 #if defined(__MACH__)
 #if defined(__LP64__)
@@ -47,12 +48,24 @@ POSSIBILITY OF SUCH DAMAGE.  */
 #error Attempting to build Mach-O support on incorrect platform
 #endif
 
+#if defined(__x86_64__)
+#define NATIVE_CPU_TYPE CPU_TYPE_X86_64
+#elif defined(__i386__)
+#define NATIVE_CPU_TYPE CPU_TYPE_X86
+#elif defined(__aarch64__)
+#define NATIVE_CPU_TYPE CPU_TYPE_ARM64
+#elif defined(__arm__)
+#define NATIVE_CPU_TYPE CPU_TYPE_ARM
+#else
+#error Could not detect native Mach-O cpu_type_t
+#endif
+
 #include <sys/types.h>
 #include <sys/syslimits.h>
 #include <string.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
-#include <mach-o/stab.h>
+#include <mach-o/fat.h>
 #include <mach-o/dyld.h>
 #include <uuid/uuid.h>
 #include <dirent.h>
@@ -67,6 +80,7 @@ struct macho_commands_view
     uint32_t commands_count;
     uint32_t commands_total_size;
     int bytes_swapped;
+    size_t base_offset;
 };
 
 enum debug_section
@@ -177,16 +191,30 @@ typedef struct nlist nlist_native_t;
 typedef struct section section_native_t;
 #endif
 
+// Gets a view into a Mach-O image, taking any slice offset into account
+int
+macho_get_view (struct backtrace_state *state, int descriptor,
+                off_t offset, size_t size,
+                backtrace_error_callback error_callback,
+                void *data, struct macho_commands_view *commands_view,
+                struct backtrace_view *view)
+{
+  return backtrace_get_view (state, descriptor,
+                             commands_view->base_offset + offset, size,
+                             error_callback, data, view);
+}
+
 int
 macho_get_commands (struct backtrace_state *state, int descriptor,
                     backtrace_error_callback error_callback,
                     void *data, struct macho_commands_view *commands_view)
 {
-  uint32_t commands_offset;
-
   int ret = 0;
+  int is_fat = 0;
   struct backtrace_view file_header_view;
   int file_header_view_valid = 0;
+  struct backtrace_view fat_archs_view;
+  int fat_archs_view_valid = 0;
 
   if (!backtrace_get_view (state, descriptor, 0, sizeof (mach_header_native_t),
                            error_callback, data, &file_header_view))
@@ -211,12 +239,91 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
         commands_view->bytes_swapped = 1;
       break;
 #endif
+      case FAT_MAGIC:
+        is_fat = 1;
+      commands_view->bytes_swapped = 0;
+      break;
+      case FAT_CIGAM:
+        is_fat = 1;
+      commands_view->bytes_swapped = 1;
+      break;
       default:
-        error_callback (
-            data,
-            "executable file is not a Mach-O image with the correct pointer size",
-            0);
-      goto end;
+        goto end;
+    }
+
+  if (is_fat)
+    {
+      const struct fat_header *fat_header = file_header_view.data;
+      uint32_t arch_count =
+          macho_file_to_host_u32 (commands_view->bytes_swapped,
+                                  fat_header->nfat_arch);
+
+      size_t archs_total_size = arch_count * sizeof (struct fat_arch);
+
+      if (!backtrace_get_view (state, descriptor, sizeof (fat_header),
+                               archs_total_size, error_callback,
+                               data, &fat_archs_view))
+        goto end;
+      fat_archs_view_valid = 1;
+
+      uint32_t native_slice_offset = 0;
+      const struct fat_arch *archs = fat_archs_view.data;
+      for (uint32_t i = 0; i < arch_count; i++)
+        {
+          const struct fat_arch *raw_arch = archs + i;
+          int cpu_type =
+              (int) macho_file_to_host_u32 (commands_view->bytes_swapped,
+                                            (uint32_t) raw_arch->cputype);
+
+          if (cpu_type == NATIVE_CPU_TYPE)
+            {
+              native_slice_offset =
+                  macho_file_to_host_u32 (commands_view->bytes_swapped,
+                                          raw_arch->offset);
+
+              break;
+            }
+        }
+
+      if (native_slice_offset == 0)
+        goto end;
+
+      backtrace_release_view (state, &file_header_view, error_callback, data);
+      file_header_view_valid = 0;
+      if (!backtrace_get_view (state, descriptor, native_slice_offset,
+                               sizeof (mach_header_native_t), error_callback,
+                               data, &file_header_view))
+        goto end;
+      file_header_view_valid = 1;
+
+      // The endianess of the slice may be different than the fat image
+      switch (*(uint32_t *) file_header_view.data)
+        {
+#if BACKTRACE_BITS == 32
+          case MH_MAGIC:
+            commands_view->bytes_swapped = 0;
+          break;
+          case MH_CIGAM:
+            commands_view->bytes_swapped = 1;
+          break;
+#endif
+#if BACKTRACE_BITS == 64
+          case MH_MAGIC_64:
+            commands_view->bytes_swapped = 0;
+          break;
+          case MH_CIGAM_64:
+            commands_view->bytes_swapped = 1;
+          break;
+#endif
+          default:
+            goto end;
+        }
+
+      commands_view->base_offset = native_slice_offset;
+    }
+  else
+    {
+      commands_view->base_offset = 0;
     }
 
   const mach_header_native_t *file_header = file_header_view.data;
@@ -226,7 +333,8 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
   commands_view->commands_total_size =
       macho_file_to_host_u32 (commands_view->bytes_swapped,
                               file_header->sizeofcmds);
-  commands_offset = sizeof (mach_header_native_t);
+  uint64_t commands_offset =
+      commands_view->base_offset + sizeof (mach_header_native_t);
 
   if (!backtrace_get_view (state, descriptor, commands_offset,
                            commands_view->commands_total_size, error_callback,
@@ -238,6 +346,8 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
 end:
   if (file_header_view_valid)
     backtrace_release_view (state, &file_header_view, error_callback, data);
+  if (fat_archs_view_valid)
+    backtrace_release_view (state, &fat_archs_view, error_callback, data);
   return ret;
 }
 
@@ -459,15 +569,16 @@ macho_add_symtab (struct backtrace_state *state,
               commands_view->bytes_swapped, symtab_command->strsize);
 
 
-          if (!backtrace_get_view (state, descriptor, symbol_table_offset,
-                                   symbol_count * sizeof (nlist_native_t),
-                                   error_callback, data, &symtab_view))
+          if (!macho_get_view (state, descriptor, symbol_table_offset,
+                               symbol_count * sizeof (nlist_native_t),
+                               error_callback, data, commands_view,
+                               &symtab_view))
             goto end;
           symtab_view_valid = 1;
 
-          if (!backtrace_get_view (state, descriptor, string_table_offset,
-                                   string_table_size, error_callback, data,
-                                   &strtab_view))
+          if (!macho_get_view (state, descriptor, string_table_offset,
+                               string_table_size, error_callback, data,
+                               commands_view, &strtab_view))
             goto end;
           strtab_view_valid = 1;
 
@@ -492,10 +603,15 @@ macho_add_symtab (struct backtrace_state *state,
               backtrace_alloc (state,
                                sizeof (struct macho_syminfo_data),
                                error_callback, data);
+          if (syminfo_data == NULL)
+            goto end;
 
           syminfo_data->symbols = backtrace_alloc (
               state, function_count * sizeof (struct macho_symbol),
               error_callback, data);
+          if (syminfo_data->symbols == NULL)
+            goto end;
+
           syminfo_data->symbol_count = function_count;
           syminfo_data->next = NULL;
           syminfo_data->min_addr = base_address;
@@ -806,9 +922,9 @@ macho_try_dwarf (struct backtrace_state *state,
       goto end;
     }
 
-  if (!backtrace_get_view (state, dwarf_descriptor, (off_t) min_dwarf_offset,
-                           max_dwarf_offset - min_dwarf_offset, error_callback,
-                           data, &dwarf_view))
+  if (!macho_get_view (state, dwarf_descriptor, (off_t) min_dwarf_offset,
+                       max_dwarf_offset - min_dwarf_offset, error_callback,
+                       data, &commands_view, &dwarf_view))
     goto end;
   dwarf_view_valid = 1;
 
