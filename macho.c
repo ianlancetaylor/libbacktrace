@@ -1,7 +1,6 @@
 /* macho.c -- Get debug data from an Mach-O file for backtraces.
    Copyright (C) 2012-2016 Free Software Foundation, Inc.
-   Written by Ian Lance Taylor, Google.
-   Copyright (C) 2017 John Colanduoni.
+   Written by John Colanduoni.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -33,10 +32,10 @@ POSSIBILITY OF SUCH DAMAGE.  */
 
 #include "config.h"
 
-// We can't use autotools to detect the pointer width of our program because
-// we may be building a fat Mach-O file containing both 32-bit and 64-bit
-// variants. However Mach-O runs a limited set of platforms so detection
-// via preprocessor is not difficult.
+/* We can't use autotools to detect the pointer width of our program because
+   we may be building a fat Mach-O file containing both 32-bit and 64-bit
+   variants. However Mach-O runs a limited set of platforms so detection
+   via preprocessor is not difficult.  */
 
 #if defined(__MACH__)
 #if defined(__LP64__)
@@ -109,11 +108,9 @@ struct found_dwarf_section
     const unsigned char *data;
 };
 
-/*
- * Mach-O symbols don't have a length. As a result we have to infer it
- * by sorting the symbol addresses for each image and recording the
- * memory range attributed to each image.
- */
+/* Mach-O symbols don't have a length. As a result we have to infer it
+   by sorting the symbol addresses for each image and recording the
+   memory range attributed to each image.  */
 struct macho_symbol
 {
     uintptr_t addr;
@@ -134,13 +131,9 @@ uint16_t
 macho_file_to_host_u16 (int file_bytes_swapped, uint16_t input)
 {
   if (file_bytes_swapped)
-    {
-      return (input >> 8) | (input << 8);
-    }
+    return (input >> 8) | (input << 8);
   else
-    {
-      return input;
-    }
+    return input;
 }
 
 uint32_t
@@ -216,6 +209,8 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
   int file_header_view_valid = 0;
   struct backtrace_view fat_archs_view;
   int fat_archs_view_valid = 0;
+  const mach_header_native_t *file_header;
+  uint64_t commands_offset;
 
   *incompatible = 0;
 
@@ -226,39 +221,49 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
 
   switch (*(uint32_t *) file_header_view.data)
     {
-#if BACKTRACE_BITS == 32
       case MH_MAGIC:
-        commands_view->bytes_swapped = 0;
+        if (BACKTRACE_BITS == 32)
+          commands_view->bytes_swapped = 0;
+        else
+          {
+            *incompatible = 1;
+            goto end;
+          }
       break;
       case MH_CIGAM:
-        commands_view->bytes_swapped = 1;
+        if (BACKTRACE_BITS == 32)
+          commands_view->bytes_swapped = 1;
+        else
+          {
+            *incompatible = 1;
+            goto end;
+          }
       break;
       case MH_MAGIC_64:
+        if (BACKTRACE_BITS == 64)
+          commands_view->bytes_swapped = 0;
+        else
+          {
+            *incompatible = 1;
+            goto end;
+          }
+      break;
       case MH_CIGAM_64:
-        *incompatible = 1;
-      goto end;
+        if (BACKTRACE_BITS == 64)
+          commands_view->bytes_swapped = 1;
+        else
+          {
+            *incompatible = 1;
+            goto end;
+          }
       break;
-#endif
-#if BACKTRACE_BITS == 64
-      case MH_MAGIC_64:
-        commands_view->bytes_swapped = 0;
-      break;
-      case MH_CIGAM_64:
-        commands_view->bytes_swapped = 1;
-      break;
-      case MH_MAGIC:
-      case MH_CIGAM:
-        *incompatible = 1;
-        goto end;
-      break;
-#endif
       case FAT_MAGIC:
         is_fat = 1;
-      commands_view->bytes_swapped = 0;
+        commands_view->bytes_swapped = 0;
       break;
       case FAT_CIGAM:
         is_fat = 1;
-      commands_view->bytes_swapped = 1;
+        commands_view->bytes_swapped = 1;
       break;
       default:
         goto end;
@@ -266,12 +271,19 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
 
   if (is_fat)
     {
-      const struct fat_header *fat_header = file_header_view.data;
-      uint32_t arch_count =
+      uint32_t native_slice_offset;
+      size_t archs_total_size;
+      uint32_t arch_count;
+      const struct fat_header *fat_header;
+      const struct fat_arch *archs;
+      uint32_t i;
+
+      fat_header = file_header_view.data;
+      arch_count =
           macho_file_to_host_u32 (commands_view->bytes_swapped,
                                   fat_header->nfat_arch);
 
-      size_t archs_total_size = arch_count * sizeof (struct fat_arch);
+      archs_total_size = arch_count * sizeof (struct fat_arch);
 
       if (!backtrace_get_view (state, descriptor, sizeof (fat_header),
                                archs_total_size, error_callback,
@@ -279,9 +291,9 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
         goto end;
       fat_archs_view_valid = 1;
 
-      uint32_t native_slice_offset = 0;
-      const struct fat_arch *archs = fat_archs_view.data;
-      for (uint32_t i = 0; i < arch_count; i++)
+      native_slice_offset = 0;
+      archs = fat_archs_view.data;
+      for (i = 0; i < arch_count; i++)
         {
           const struct fat_arch *raw_arch = archs + i;
           int cpu_type =
@@ -315,22 +327,30 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
       // The endianess of the slice may be different than the fat image
       switch (*(uint32_t *) file_header_view.data)
         {
-#if BACKTRACE_BITS == 32
           case MH_MAGIC:
-            commands_view->bytes_swapped = 0;
+            if (BACKTRACE_BITS == 32)
+              commands_view->bytes_swapped = 0;
+            else
+              goto end;
           break;
           case MH_CIGAM:
-            commands_view->bytes_swapped = 1;
+            if (BACKTRACE_BITS == 32)
+              commands_view->bytes_swapped = 1;
+            else
+              goto end;
           break;
-#endif
-#if BACKTRACE_BITS == 64
           case MH_MAGIC_64:
-            commands_view->bytes_swapped = 0;
+            if (BACKTRACE_BITS == 64)
+              commands_view->bytes_swapped = 0;
+            else
+              goto end;
           break;
           case MH_CIGAM_64:
-            commands_view->bytes_swapped = 1;
+            if (BACKTRACE_BITS == 64)
+              commands_view->bytes_swapped = 1;
+            else
+              goto end;
           break;
-#endif
           default:
             goto end;
         }
@@ -338,18 +358,16 @@ macho_get_commands (struct backtrace_state *state, int descriptor,
       commands_view->base_offset = native_slice_offset;
     }
   else
-    {
-      commands_view->base_offset = 0;
-    }
+    commands_view->base_offset = 0;
 
-  const mach_header_native_t *file_header = file_header_view.data;
+  file_header = file_header_view.data;
   commands_view->commands_count =
       macho_file_to_host_u32 (commands_view->bytes_swapped,
                               file_header->ncmds);
   commands_view->commands_total_size =
       macho_file_to_host_u32 (commands_view->bytes_swapped,
                               file_header->sizeofcmds);
-  uint64_t commands_offset =
+  commands_offset =
       commands_view->base_offset + sizeof (mach_header_native_t);
 
   if (!backtrace_get_view (state, descriptor, commands_offset,
@@ -375,9 +393,13 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED,
                 uuid_t *uuid)
 {
   size_t offset = 0;
+  uint32_t i = 0;
 
-  for (uint32_t i = 0; i < commands_view->commands_count; i++)
+  for (i = 0; i < commands_view->commands_count; i++)
     {
+      const struct load_command *raw_command;
+      struct load_command command;
+
       if (offset + sizeof (struct load_command)
           > commands_view->commands_total_size)
         {
@@ -387,9 +409,8 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED,
           return 0;
         }
 
-      const struct load_command *raw_command =
+      raw_command =
           commands_view->view.data + offset;
-      struct load_command command;
       command.cmd = macho_file_to_host_u32 (commands_view->bytes_swapped,
                                             raw_command->cmd);
       command.cmdsize = macho_file_to_host_u32 (commands_view->bytes_swapped,
@@ -397,6 +418,8 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED,
 
       if (command.cmd == LC_UUID)
         {
+          const struct uuid_command *uuid_command;
+
           if (offset + sizeof (struct uuid_command)
               > commands_view->commands_total_size)
             {
@@ -406,7 +429,7 @@ macho_get_uuid (struct backtrace_state *state ATTRIBUTE_UNUSED,
               return 0;
             }
 
-          const struct uuid_command *uuid_command =
+          uuid_command =
               (struct uuid_command *) raw_command;
           memcpy (uuid, uuid_command->uuid, sizeof (uuid_t));
           return 1;
@@ -432,11 +455,15 @@ macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
 {
   size_t offset = 0;
   int found_text = 0;
+  uint32_t i = 0;
 
   *max_address = 0;
 
-  for (uint32_t i = 0; i < commands_view->commands_count; i++)
+  for (i = 0; i < commands_view->commands_count; i++)
     {
+      const struct load_command *raw_command;
+      struct load_command command;
+
       if (offset + sizeof (struct load_command)
           > commands_view->commands_total_size)
         {
@@ -446,9 +473,7 @@ macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
           return 0;
         }
 
-      const struct load_command *raw_command =
-          commands_view->view.data + offset;
-      struct load_command command;
+      raw_command = commands_view->view.data + offset;
       command.cmd = macho_file_to_host_u32 (commands_view->bytes_swapped,
                                             raw_command->cmd);
       command.cmdsize = macho_file_to_host_u32 (commands_view->bytes_swapped,
@@ -456,6 +481,12 @@ macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
 
       if (command.cmd == LC_SEGMENT_NATIVE)
         {
+          const segment_command_native_t *raw_segment;
+          uintptr_t segment_vmaddr;
+          uintptr_t segment_vmsize;
+          uintptr_t segment_maxaddr;
+          uintptr_t text_fileoff;
+
           if (offset + sizeof (segment_command_native_t)
               > commands_view->commands_total_size)
             {
@@ -465,19 +496,18 @@ macho_get_addr_range (struct backtrace_state *state ATTRIBUTE_UNUSED,
               return 0;
             }
 
-          const segment_command_native_t *raw_segment =
-              (segment_command_native_t *) raw_command;
+          raw_segment = (segment_command_native_t *) raw_command;
 
-          uintptr_t segment_vmaddr = macho_file_to_host_usize (
+          segment_vmaddr = macho_file_to_host_usize (
               commands_view->bytes_swapped, raw_segment->vmaddr);
-          uintptr_t segment_vmsize = macho_file_to_host_usize (
+          segment_vmsize = macho_file_to_host_usize (
               commands_view->bytes_swapped, raw_segment->vmsize);
-          uintptr_t segment_maxaddr = segment_vmaddr + segment_vmsize;
+          segment_maxaddr = segment_vmaddr + segment_vmsize;
 
           if (strncmp (raw_segment->segname, "__TEXT",
                        sizeof (raw_segment->segname)) == 0)
             {
-              uintptr_t text_fileoff = macho_file_to_host_usize (
+              text_fileoff = macho_file_to_host_usize (
                   commands_view->bytes_swapped, raw_segment->fileoff);
               *base_address = segment_vmaddr - text_fileoff;
 
@@ -539,11 +569,19 @@ macho_add_symtab (struct backtrace_state *state,
   int symtab_view_valid = 0;
   struct backtrace_view strtab_view;
   int strtab_view_valid = 0;
+  size_t syminfo_index = 0;
+  size_t function_count = 0;
+  uint32_t i = 0;
+  uint32_t j = 0;
+  uint32_t symtab_index = 0;
 
   *found_sym = 0;
 
-  for (uint32_t i = 0; i < commands_view->commands_count; i++)
+  for (i = 0; i < commands_view->commands_count; i++)
     {
+      const struct load_command *raw_command;
+      struct load_command command;
+
       if (offset + sizeof (struct load_command)
           > commands_view->commands_total_size)
         {
@@ -553,9 +591,7 @@ macho_add_symtab (struct backtrace_state *state,
           return 0;
         }
 
-      const struct load_command *raw_command =
-          commands_view->view.data + offset;
-      struct load_command command;
+      raw_command = commands_view->view.data + offset;
       command.cmd = macho_file_to_host_u32 (commands_view->bytes_swapped,
                                             raw_command->cmd);
       command.cmdsize = macho_file_to_host_u32 (commands_view->bytes_swapped,
@@ -563,6 +599,12 @@ macho_add_symtab (struct backtrace_state *state,
 
       if (command.cmd == LC_SYMTAB)
         {
+          const struct symtab_command *symtab_command;
+          uint32_t symbol_table_offset;
+          uint32_t symbol_count;
+          uint32_t string_table_offset;
+          uint32_t string_table_size;
+
           if (offset + sizeof (struct symtab_command)
               > commands_view->commands_total_size)
             {
@@ -572,16 +614,15 @@ macho_add_symtab (struct backtrace_state *state,
               return 0;
             }
 
-          const struct symtab_command *symtab_command =
-              (struct symtab_command *) raw_command;
+          symtab_command = (struct symtab_command *) raw_command;
 
-          uint32_t symbol_table_offset = macho_file_to_host_u32 (
+          symbol_table_offset = macho_file_to_host_u32 (
               commands_view->bytes_swapped, symtab_command->symoff);
-          uint32_t symbol_count = macho_file_to_host_u32 (
+          symbol_count = macho_file_to_host_u32 (
               commands_view->bytes_swapped, symtab_command->nsyms);
-          uint32_t string_table_offset = macho_file_to_host_u32 (
+          string_table_offset = macho_file_to_host_u32 (
               commands_view->bytes_swapped, symtab_command->stroff);
-          uint32_t string_table_size = macho_file_to_host_u32 (
+          string_table_size = macho_file_to_host_u32 (
               commands_view->bytes_swapped, symtab_command->strsize);
 
 
@@ -599,9 +640,7 @@ macho_add_symtab (struct backtrace_state *state,
           strtab_view_valid = 1;
 
           // Count functions first
-          size_t function_count = 0;
-
-          for (uint32_t j = 0; j < symbol_count; j++)
+          for (j = 0; j < symbol_count; j++)
             {
               const nlist_native_t *raw_sym =
                   ((const nlist_native_t *) symtab_view.data) + j;
@@ -633,8 +672,7 @@ macho_add_symtab (struct backtrace_state *state,
           syminfo_data->min_addr = base_address;
           syminfo_data->max_addr = max_image_address;
 
-          size_t syminfo_index = 0;
-          for (uint32_t symtab_index = 0;
+          for (symtab_index = 0;
                symtab_index < symbol_count; symtab_index++)
             {
               const nlist_native_t *raw_sym =
@@ -643,11 +681,15 @@ macho_add_symtab (struct backtrace_state *state,
 
               if (macho_symbol_type_relevant (raw_sym->n_type))
                 {
+                  size_t strtab_index;
+                  const char *name;
+                  size_t max_len_plus_one;
+
                   syminfo_data->symbols[syminfo_index].addr =
                       macho_file_to_host_usize (commands_view->bytes_swapped,
                                                 raw_sym->n_value) + vmslide;
 
-                  size_t strtab_index = macho_file_to_host_u32 (
+                  strtab_index = macho_file_to_host_u32 (
                       commands_view->bytes_swapped,
                       raw_sym->n_un.n_strx);
 
@@ -662,9 +704,8 @@ macho_add_symtab (struct backtrace_state *state,
                       goto end;
                     }
 
-                  const char *name = strtab_view.data + strtab_index;
-                  size_t max_len_plus_one =
-                      string_table_size - strtab_index;
+                  name = strtab_view.data + strtab_index;
+                  max_len_plus_one = string_table_size - strtab_index;
 
                   if (strnlen (name, max_len_plus_one) >= max_len_plus_one)
                     {
@@ -783,6 +824,12 @@ macho_try_dwarf (struct backtrace_state *state,
   struct backtrace_view dwarf_view;
   int dwarf_view_valid = 0;
   size_t offset = 0;
+  struct found_dwarf_section dwarf_sections[DEBUG_MAX];
+  uintptr_t min_dwarf_offset = 0;
+  uintptr_t max_dwarf_offset = 0;
+  uint32_t i = 0;
+  uint32_t j = 0;
+  int k = 0;
 
   *matched = 0;
   *found_sym = 0;
@@ -830,13 +877,14 @@ macho_try_dwarf (struct backtrace_state *state,
     goto end;
 
   // Get DWARF sections
-  struct found_dwarf_section dwarf_sections[DEBUG_MAX];
-  uintptr_t min_dwarf_offset = 0;
-  uintptr_t max_dwarf_offset = 0;
+
   memset (dwarf_sections, 0, sizeof (dwarf_sections));
   offset = 0;
-  for (uint32_t i = 0; i < commands_view.commands_count; i++)
+  for (i = 0; i < commands_view.commands_count; i++)
     {
+      const struct load_command *raw_command;
+      struct load_command command;
+
       if (offset + sizeof (struct load_command)
           > commands_view.commands_total_size)
         {
@@ -845,8 +893,7 @@ macho_try_dwarf (struct backtrace_state *state,
           goto end;
         }
 
-      const struct load_command *raw_command = commands_view.view.data + offset;
-      struct load_command command;
+      raw_command = commands_view.view.data + offset;
       command.cmd = macho_file_to_host_u32 (commands_view.bytes_swapped,
                                             raw_command->cmd);
       command.cmdsize = macho_file_to_host_u32 (commands_view.bytes_swapped,
@@ -856,6 +903,7 @@ macho_try_dwarf (struct backtrace_state *state,
         {
           uint32_t section_count;
           size_t section_offset;
+          const segment_command_native_t *raw_segment;
 
           if (offset + sizeof (segment_command_native_t)
               > commands_view.commands_total_size)
@@ -866,8 +914,7 @@ macho_try_dwarf (struct backtrace_state *state,
               goto end;
             }
 
-          const segment_command_native_t *raw_segment =
-              (const segment_command_native_t *) raw_command;
+          raw_segment = (const segment_command_native_t *) raw_command;
 
           if (strncmp (raw_segment->segname, "__DWARF",
                        sizeof (raw_segment->segname)) == 0)
@@ -879,8 +926,10 @@ macho_try_dwarf (struct backtrace_state *state,
               section_offset = offset + sizeof (segment_command_native_t);
 
               // Search sections for relevant DWARF section names
-              for (uint32_t j = 0; j < section_count; j++)
+              for (j = 0; j < section_count; j++)
                 {
+                  const section_native_t *raw_section;
+
                   if (section_offset + sizeof (section_native_t) >
                       commands_view.commands_total_size)
                     {
@@ -890,11 +939,12 @@ macho_try_dwarf (struct backtrace_state *state,
                       goto end;
                     }
 
-                  const section_native_t *raw_section =
-                      commands_view.view.data + section_offset;
+                  raw_section = commands_view.view.data + section_offset;
 
-                  for (int k = 0; k < DEBUG_MAX; k++)
+                  for (k = 0; k < DEBUG_MAX; k++)
                     {
+                      uintptr_t dwarf_section_end;
+
                       if (strncmp (raw_section->sectname,
                                    debug_section_names[k],
                                    sizeof (raw_section->sectname)) == 0)
@@ -915,7 +965,7 @@ macho_try_dwarf (struct backtrace_state *state,
                               min_dwarf_offset)
                             min_dwarf_offset = dwarf_sections[k].file_offset;
 
-                          uintptr_t dwarf_section_end =
+                          dwarf_section_end =
                               dwarf_sections[k].file_offset +
                               dwarf_sections[k].file_size;
                           if (dwarf_section_end > max_dwarf_offset)
@@ -948,7 +998,7 @@ macho_try_dwarf (struct backtrace_state *state,
     goto end;
   dwarf_view_valid = 1;
 
-  for (int i = 0; i < DEBUG_MAX; i++)
+  for (i = 0; i < DEBUG_MAX; i++)
     {
       if (dwarf_sections[i].file_offset == 0)
         dwarf_sections[i].data = NULL;
@@ -968,8 +1018,8 @@ macho_try_dwarf (struct backtrace_state *state,
                             dwarf_sections[DEBUG_RANGES].file_size,
                             dwarf_sections[DEBUG_STR].data,
                             dwarf_sections[DEBUG_STR].file_size,
-                            (__DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN) ^
-                            commands_view.bytes_swapped,
+                            ((__DARWIN_BYTE_ORDER == __DARWIN_BIG_ENDIAN)
+                            ^ commands_view.bytes_swapped),
                             error_callback, data, fileline_fn))
     goto end;
 
@@ -1002,13 +1052,16 @@ macho_try_dsym (struct backtrace_state *state,
   int dwarf_image_dir_valid = 0;
   struct dirent *directory_entry;
   char dwarf_filename[PATH_MAX];
+  int dwarf_matched;
+  int dwarf_had_sym;
+  int dwarf_had_dwarf;
 
   *matched = 0;
   *found_sym = 0;
   *found_dwarf = 0;
 
-  strncpy(dwarf_image_dir_path, dsym_filename, PATH_MAX);
-  strncat(dwarf_image_dir_path, "/Contents/Resources/DWARF", PATH_MAX);
+  strncpy (dwarf_image_dir_path, dsym_filename, PATH_MAX);
+  strncat (dwarf_image_dir_path, "/Contents/Resources/DWARF", PATH_MAX);
 
   if (!(dwarf_image_dir = opendir (dwarf_image_dir_path)))
     {
@@ -1023,13 +1076,10 @@ macho_try_dsym (struct backtrace_state *state,
       if (directory_entry->d_type != DT_REG)
         continue;
 
-      strncpy(dwarf_filename, dwarf_image_dir_path, PATH_MAX);
-      strncat(dwarf_filename, "/", PATH_MAX);
-      strncat(dwarf_filename, directory_entry->d_name, PATH_MAX);
+      strncpy (dwarf_filename, dwarf_image_dir_path, PATH_MAX);
+      strncat (dwarf_filename, "/", PATH_MAX);
+      strncat (dwarf_filename, directory_entry->d_name, PATH_MAX);
 
-      int dwarf_matched;
-      int dwarf_had_sym;
-      int dwarf_had_dwarf; // ;)
       if (!macho_try_dwarf (state, error_callback, data, fileline_fn,
                             executable_uuid, base_address, max_image_address,
                             vmslide, dwarf_filename,
@@ -1071,13 +1121,15 @@ macho_add (struct backtrace_state *state,
   int ret = 0;
   struct macho_commands_view commands_view;
   int commands_view_valid = 0;
-  uint32_t dyld_image_count;
   char executable_dirname[PATH_MAX];
   size_t filename_len;
   DIR *executable_dir = NULL;
   int executable_dir_valid = 0;
   struct dirent *directory_entry;
   char dsym_full_path[PATH_MAX];
+  static const char *extension;
+  size_t extension_len;
+  ssize_t i;
 
   *found_sym = 0;
   *found_dwarf = 0;
@@ -1115,9 +1167,9 @@ macho_add (struct backtrace_state *state,
     }
 
   // Look for dSYM in our executable's directory
-  strncpy(executable_dirname, filename, PATH_MAX);
+  strncpy (executable_dirname, filename, PATH_MAX);
   filename_len = strlen (executable_dirname);
-  for (ssize_t i = filename_len - 1; i >= 0; i--)
+  for (i = filename_len - 1; i >= 0; i--)
     {
       if (executable_dirname[i] == '/')
         {
@@ -1140,8 +1192,8 @@ macho_add (struct backtrace_state *state,
     }
   executable_dir_valid = 1;
 
-  static const char *extension = ".dSYM";
-  size_t extension_len = strlen (extension);
+  extension = ".dSYM";
+  extension_len = strlen (extension);
   while ((directory_entry = readdir (executable_dir)))
     {
       if (directory_entry->d_namlen < extension_len)
@@ -1149,14 +1201,15 @@ macho_add (struct backtrace_state *state,
       if (strncasecmp (directory_entry->d_name + directory_entry->d_namlen
                        - extension_len, extension, extension_len) == 0)
         {
-          // Found a dSYM
-          strncpy(dsym_full_path, executable_dirname, PATH_MAX);
-          strncat(dsym_full_path, "/", PATH_MAX);
-          strncat(dsym_full_path, directory_entry->d_name, PATH_MAX);
-
           int matched;
           int dsym_had_sym;
           int dsym_had_dwarf;
+
+          // Found a dSYM
+          strncpy (dsym_full_path, executable_dirname, PATH_MAX);
+          strncat (dsym_full_path, "/", PATH_MAX);
+          strncat (dsym_full_path, directory_entry->d_name, PATH_MAX);
+
           if (!macho_try_dsym (state, error_callback, data,
                                fileline_fn, &image_uuid,
                                image_actual_base_address,
@@ -1289,17 +1342,21 @@ backtrace_initialize (struct backtrace_state *state, int descriptor,
   fileline macho_fileline_fn = macho_nodebug;
   int found_sym = 0;
   int found_dwarf = 0;
+  uint32_t i = 0;
+  uint32_t loaded_image_count;
 
   // Add all loaded images
-  uint32_t loaded_image_count = _dyld_image_count ();
-  for (uint32_t i = 0; i < loaded_image_count; i++)
+  loaded_image_count = _dyld_image_count ();
+  for (i = 0; i < loaded_image_count; i++)
     {
       int current_found_sym;
       int current_found_dwarf;
       int current_descriptor;
+      intptr_t current_vmslide;
+      const char *current_name;
 
-      intptr_t current_vmslide = _dyld_get_image_vmaddr_slide (i);
-      const char *current_name = _dyld_get_image_name (i);
+      current_vmslide = _dyld_get_image_vmaddr_slide (i);
+      current_name = _dyld_get_image_name (i);
 
       if (current_name == NULL)
         continue;
