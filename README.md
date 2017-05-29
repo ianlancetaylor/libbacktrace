@@ -26,5 +26,5 @@ The library is written to make it straightforward to add support for
 other object file and debugging formats.
 
 The library relies on the C++ unwind API defined at
-http://mentorembedded.github.io/cxx-abi/abi-eh.html.
+https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html
 This API is provided by GCC.
