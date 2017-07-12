@@ -373,6 +373,9 @@ fi
 AC_CHECK_DECLS(strnlen)
 AC_CHECK_FUNCS(lstat readlink)
 
+# Check if BSDs can try KERN_PROC_PATHNAME
+AC_CHECK_HEADERS(sys/sysctl.h)
+
 # Check for getexecname function.
 if test -n "${with_target_subdir}"; then
    case "${host}" in

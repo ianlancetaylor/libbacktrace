@@ -11731,6 +11731,20 @@ fi
 done
 
 
+# Check if BSDs can try KERN_PROC_PATHNAME
+for ac_header in sys/sysctl.h
+do :
+  ac_fn_c_check_header_mongrel "$LINENO" "sys/sysctl.h" "ac_cv_header_sys_sysctl_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_sysctl_h" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_SYS_SYSCTL_H 1
+_ACEOF
+
+fi
+
+done
+
+
 # Check for getexecname function.
 if test -n "${with_target_subdir}"; then
    case "${host}" in
