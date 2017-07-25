@@ -604,7 +604,7 @@ coff_add (struct backtrace_state *state, int descriptor,
   int str_view_valid;
   size_t str_size;
   off_t str_off;
-  struct backtrace_view syms_view;
+  struct backtrace_view syms_view = {0};
   off_t syms_off;
   size_t syms_size;
   int syms_view_valid;
