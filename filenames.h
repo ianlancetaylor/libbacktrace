@@ -1,4 +1,4 @@
-/* backtrace.c -- Entry point for stack backtrace library.
+/* btest.c -- Filename header for libbacktrace library
    Copyright (C) 2012-2018 Free Software Foundation, Inc.
    Written by Ian Lance Taylor, Google.
 
@@ -30,37 +30,20 @@ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.  */
 
-#include "config.h"
+#ifndef GCC_VERSION
+# define GCC_VERSION (__GNUC__ * 1000 + __GNUC_MINOR__)
+#endif
 
-#include <sys/types.h>
+#if (GCC_VERSION < 2007)
+# define __attribute__(x)
+#endif
 
-#include "backtrace.h"
+#ifndef ATTRIBUTE_UNUSED
+# define ATTRIBUTE_UNUSED __attribute__ ((__unused__))
+#endif
 
-#include "internal.h"
-
-/* This source file is compiled if the unwind library is not
-   available.  */
-
-int
-backtrace_full (struct backtrace_state *state ATTRIBUTE_UNUSED,
-		int skip ATTRIBUTE_UNUSED,
-		backtrace_full_callback callback ATTRIBUTE_UNUSED,
-		backtrace_error_callback error_callback, void *data)
-{
-  error_callback (data,
-		  "no stack trace because unwind library not available",
-		  0);
-  return 0;
-}
-
-int
-backtrace_simple (struct backtrace_state *state ATTRIBUTE_UNUSED,
-		  int skip ATTRIBUTE_UNUSED,
-		  backtrace_simple_callback callback ATTRIBUTE_UNUSED,
-		  backtrace_error_callback error_callback, void *data)
-{
-  error_callback (data,
-		  "no stack trace because unwind library not available",
-		  0);
-  return 0;
-}
+#if defined(__MSDOS__) || defined(_WIN32) || defined(__OS2__) || defined (__CYGWIN__)
+# define IS_DIR_SEPARATOR(c) ((c) == '/' || (c) == '\\')
+#else
+# define IS_DIR_SEPARATOR(c) ((c) == '/')
+#endif

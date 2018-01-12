@@ -1,6 +1,5 @@
-/* backtrace.c -- Entry point for stack backtrace library.
-   Copyright (C) 2012-2018 Free Software Foundation, Inc.
-   Written by Ian Lance Taylor, Google.
+/* edtest2.c -- Test for libbacktrace storage allocation stress handling (p2)
+   Copyright (C) 2017-2018 Free Software Foundation, Inc.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -30,37 +29,15 @@ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.  */
 
-#include "config.h"
+/* This file intentionally written without any #include's
+ */
 
-#include <sys/types.h>
+extern int f3(int, int);
+extern int f2(int);
 
-#include "backtrace.h"
-
-#include "internal.h"
-
-/* This source file is compiled if the unwind library is not
-   available.  */
-
-int
-backtrace_full (struct backtrace_state *state ATTRIBUTE_UNUSED,
-		int skip ATTRIBUTE_UNUSED,
-		backtrace_full_callback callback ATTRIBUTE_UNUSED,
-		backtrace_error_callback error_callback, void *data)
+int f2(int x)
 {
-  error_callback (data,
-		  "no stack trace because unwind library not available",
-		  0);
-  return 0;
-}
-
-int
-backtrace_simple (struct backtrace_state *state ATTRIBUTE_UNUSED,
-		  int skip ATTRIBUTE_UNUSED,
-		  backtrace_simple_callback callback ATTRIBUTE_UNUSED,
-		  backtrace_error_callback error_callback, void *data)
-{
-  error_callback (data,
-		  "no stack trace because unwind library not available",
-		  0);
-  return 0;
+  /* Returning a value here and elsewhere avoids a tailcall which
+     would mess up the backtrace.  */
+  return f3(x, __LINE__) + 3;
 }
