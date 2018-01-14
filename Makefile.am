@@ -35,7 +35,7 @@ AM_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) $(PIC_FLAG)
 
 include_HEADERS = backtrace.h backtrace-supported.h
 
-noinst_LTLIBRARIES = libbacktrace.la
+lib_LTLIBRARIES = libbacktrace.la
 
 libbacktrace_la_SOURCES = \
 	backtrace.h \
@@ -137,8 +137,8 @@ if HAVE_OBJCOPY_DEBUGLINK
 TESTS += dtest
 
 dtest: btest
-	$(OBJCOPY) --only-keep-debug btest btest.debug
-	$(OBJCOPY) --strip-debug --add-gnu-debuglink=btest.debug btest dtest
+	$(OBJCOPY) --only-keep-debug .libs/btest btest.debug
+	$(OBJCOPY) --strip-debug --add-gnu-debuglink=btest.debug .libs/btest dtest
 
 endif HAVE_OBJCOPY_DEBUGLINK
 
