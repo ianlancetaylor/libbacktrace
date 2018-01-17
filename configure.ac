@@ -33,6 +33,7 @@ AC_PREREQ(2.64)
 AC_INIT(package-unused, version-unused,, libbacktrace)
 AC_CONFIG_SRCDIR(backtrace.h)
 AC_CONFIG_HEADER(config.h)
+AC_CONFIG_MACRO_DIR(config)
 
 # with_target_subdir is used when configured as part of a GCC tree.
 if test -n "${with_target_subdir}"; then
@@ -72,8 +73,6 @@ AC_PROG_CC
 m4_rename_force([backtrace_PRECIOUS],[_AC_ARG_VAR_PRECIOUS])
 
 AC_SUBST(CFLAGS)
-
-AC_PROG_RANLIB
 
 AC_PROG_AWK
 case "$AWK" in

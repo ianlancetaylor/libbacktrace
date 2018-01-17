@@ -85,18 +85,24 @@ build_triplet = @build@
 host_triplet = @host@
 target_triplet = @target@
 check_PROGRAMS = $(am__EXEEXT_1) $(am__EXEEXT_2) $(am__EXEEXT_3)
-@NATIVE_TRUE@am__append_1 = btest stest ztest edtest
+@NATIVE_TRUE@am__append_1 = btest btest_static stest ztest edtest
 @HAVE_ZLIB_TRUE@@NATIVE_TRUE@am__append_2 = -lz
-@HAVE_PTHREAD_TRUE@@NATIVE_TRUE@am__append_3 = ttest
-@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@am__append_4 = dtest
-@HAVE_COMPRESSED_DEBUG_TRUE@@NATIVE_TRUE@am__append_5 = ctestg ctesta
+@NATIVE_TRUE@am__append_3 = edtest2_build.c gen_edtest2_build
+@HAVE_PTHREAD_TRUE@@NATIVE_TRUE@am__append_4 = ttest
+@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@am__append_5 = dtest
+@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@am__append_6 = dtest btest.debug
+@HAVE_COMPRESSED_DEBUG_TRUE@@NATIVE_TRUE@am__append_7 = ctestg ctesta
 subdir = .
 DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am \
 	$(top_srcdir)/configure $(am__configure_deps) \
 	$(srcdir)/config.h.in $(srcdir)/backtrace-supported.h.in \
 	$(include_HEADERS)
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
-am__aclocal_m4_deps = $(top_srcdir)/acinclude.m4 \
+am__aclocal_m4_deps = $(top_srcdir)/config/libtool.m4 \
+	$(top_srcdir)/config/ltoptions.m4 \
+	$(top_srcdir)/config/ltsugar.m4 \
+	$(top_srcdir)/config/ltversion.m4 \
+	$(top_srcdir)/config/lt~obsolete.m4 $(top_srcdir)/acinclude.m4 \
 	$(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
@@ -139,8 +145,8 @@ am__DEPENDENCIES_1 =
 am_libbacktrace_la_OBJECTS = atomic.lo dwarf.lo fileline.lo posix.lo \
 	print.lo sort.lo state.lo
 libbacktrace_la_OBJECTS = $(am_libbacktrace_la_OBJECTS)
-@NATIVE_TRUE@am__EXEEXT_1 = btest$(EXEEXT) stest$(EXEEXT) \
-@NATIVE_TRUE@	ztest$(EXEEXT) edtest$(EXEEXT)
+@NATIVE_TRUE@am__EXEEXT_1 = btest$(EXEEXT) btest_static$(EXEEXT) \
+@NATIVE_TRUE@	stest$(EXEEXT) ztest$(EXEEXT) edtest$(EXEEXT)
 @HAVE_PTHREAD_TRUE@@NATIVE_TRUE@am__EXEEXT_2 = ttest$(EXEEXT)
 @HAVE_COMPRESSED_DEBUG_TRUE@@NATIVE_TRUE@am__EXEEXT_3 =  \
 @HAVE_COMPRESSED_DEBUG_TRUE@@NATIVE_TRUE@	ctestg$(EXEEXT) \
@@ -152,6 +158,13 @@ btest_OBJECTS = $(am_btest_OBJECTS)
 btest_LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(btest_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
+@NATIVE_TRUE@am_btest_static_OBJECTS = btest_static-btest.$(OBJEXT) \
+@NATIVE_TRUE@	btest_static-testlib.$(OBJEXT)
+btest_static_OBJECTS = $(am_btest_static_OBJECTS)
+@NATIVE_TRUE@btest_static_DEPENDENCIES = libbacktrace.la
+btest_static_LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(btest_static_CFLAGS) \
+	$(CFLAGS) $(btest_static_LDFLAGS) $(LDFLAGS) -o $@
 @HAVE_COMPRESSED_DEBUG_TRUE@@NATIVE_TRUE@am_ctesta_OBJECTS = ctesta-btest.$(OBJEXT) \
 @HAVE_COMPRESSED_DEBUG_TRUE@@NATIVE_TRUE@	ctesta-testlib.$(OBJEXT)
 ctesta_OBJECTS = $(am_ctesta_OBJECTS)
@@ -204,9 +217,9 @@ LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
 SOURCES = $(libbacktrace_la_SOURCES) $(EXTRA_libbacktrace_la_SOURCES) \
-	$(btest_SOURCES) $(ctesta_SOURCES) $(ctestg_SOURCES) \
-	$(edtest_SOURCES) $(stest_SOURCES) $(ttest_SOURCES) \
-	$(ztest_SOURCES)
+	$(btest_SOURCES) $(btest_static_SOURCES) $(ctesta_SOURCES) \
+	$(ctestg_SOURCES) $(edtest_SOURCES) $(stest_SOURCES) \
+	$(ttest_SOURCES) $(ztest_SOURCES)
 MULTISRCTOP = 
 MULTIBUILDTOP = 
 MULTIDIRS = 
@@ -273,7 +286,6 @@ MKDIR_P = @MKDIR_P@
 NM = @NM@
 NMEDIT = @NMEDIT@
 OBJCOPY = @OBJCOPY@
-OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
 OTOOL = @OTOOL@
 OTOOL64 = @OTOOL64@
@@ -330,6 +342,7 @@ libexecdir = @libexecdir@
 libtool_VERSION = @libtool_VERSION@
 localedir = @localedir@
 localstatedir = @localstatedir@
+lt_ECHO = @lt_ECHO@
 mandir = @mandir@
 mkdir_p = @mkdir_p@
 multi_basedir = @multi_basedir@
@@ -338,7 +351,6 @@ pdfdir = @pdfdir@
 prefix = @prefix@
 program_transform_name = @program_transform_name@
 psdir = @psdir@
-runstatedir = @runstatedir@
 sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
@@ -351,7 +363,7 @@ target_vendor = @target_vendor@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-ACLOCAL_AMFLAGS = -I .. -I ../config
+ACLOCAL_AMFLAGS = -I config
 AM_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) $(PIC_FLAG)
 include_HEADERS = backtrace.h backtrace-supported.h
 lib_LTLIBRARIES = libbacktrace.la
@@ -398,10 +410,15 @@ libbacktrace_la_LIBADD = \
 	$(ALLOC_FILE)
 
 libbacktrace_la_DEPENDENCIES = $(libbacktrace_la_LIBADD)
-TESTS = $(check_PROGRAMS) $(am__append_4)
+CLEANFILES = $(am__append_3) $(am__append_6)
+TESTS = $(check_PROGRAMS) $(am__append_5)
 @NATIVE_TRUE@btest_SOURCES = btest.c testlib.c
 @NATIVE_TRUE@btest_CFLAGS = $(AM_CFLAGS) -g -O
 @NATIVE_TRUE@btest_LDADD = libbacktrace.la
+@NATIVE_TRUE@btest_static_SOURCES = btest.c testlib.c
+@NATIVE_TRUE@btest_static_CFLAGS = $(AM_CFLAGS) -g -O
+@NATIVE_TRUE@btest_static_LDADD = libbacktrace.la
+@NATIVE_TRUE@btest_static_LDFLAGS = -static-libtool-libs
 @NATIVE_TRUE@stest_SOURCES = stest.c
 @NATIVE_TRUE@stest_LDADD = libbacktrace.la
 @NATIVE_TRUE@ztest_SOURCES = ztest.c testlib.c
@@ -523,6 +540,9 @@ clean-checkPROGRAMS:
 btest$(EXEEXT): $(btest_OBJECTS) $(btest_DEPENDENCIES) $(EXTRA_btest_DEPENDENCIES) 
 	@rm -f btest$(EXEEXT)
 	$(btest_LINK) $(btest_OBJECTS) $(btest_LDADD) $(LIBS)
+btest_static$(EXEEXT): $(btest_static_OBJECTS) $(btest_static_DEPENDENCIES) $(EXTRA_btest_static_DEPENDENCIES) 
+	@rm -f btest_static$(EXEEXT)
+	$(btest_static_LINK) $(btest_static_OBJECTS) $(btest_static_LDADD) $(LIBS)
 ctesta$(EXEEXT): $(ctesta_OBJECTS) $(ctesta_DEPENDENCIES) $(EXTRA_ctesta_DEPENDENCIES) 
 	@rm -f ctesta$(EXEEXT)
 	$(ctesta_LINK) $(ctesta_OBJECTS) $(ctesta_LDADD) $(LIBS)
@@ -568,6 +588,18 @@ btest-testlib.o: testlib.c
 
 btest-testlib.obj: testlib.c
 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(btest_CFLAGS) $(CFLAGS) -c -o btest-testlib.obj `if test -f 'testlib.c'; then $(CYGPATH_W) 'testlib.c'; else $(CYGPATH_W) '$(srcdir)/testlib.c'; fi`
+
+btest_static-btest.o: btest.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(btest_static_CFLAGS) $(CFLAGS) -c -o btest_static-btest.o `test -f 'btest.c' || echo '$(srcdir)/'`btest.c
+
+btest_static-btest.obj: btest.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(btest_static_CFLAGS) $(CFLAGS) -c -o btest_static-btest.obj `if test -f 'btest.c'; then $(CYGPATH_W) 'btest.c'; else $(CYGPATH_W) '$(srcdir)/btest.c'; fi`
+
+btest_static-testlib.o: testlib.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(btest_static_CFLAGS) $(CFLAGS) -c -o btest_static-testlib.o `test -f 'testlib.c' || echo '$(srcdir)/'`testlib.c
+
+btest_static-testlib.obj: testlib.c
+	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(btest_static_CFLAGS) $(CFLAGS) -c -o btest_static-testlib.obj `if test -f 'testlib.c'; then $(CYGPATH_W) 'testlib.c'; else $(CYGPATH_W) '$(srcdir)/testlib.c'; fi`
 
 ctesta-btest.o: btest.c
 	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(ctesta_CFLAGS) $(CFLAGS) -c -o ctesta-btest.o `test -f 'btest.c' || echo '$(srcdir)/'`btest.c
@@ -839,6 +871,7 @@ install-strip:
 mostlyclean-generic:
 
 clean-generic:
+	-test -z "$(CLEANFILES)" || rm -f $(CLEANFILES)
 
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
@@ -947,9 +980,9 @@ uninstall-am: uninstall-includeHEADERS uninstall-libLTLIBRARIES
 @NATIVE_TRUE@	$(SHELL) $(srcdir)/move-if-change tmp-edtest2_build.c edtest2_build.c
 @NATIVE_TRUE@	echo timestamp > $@
 
-@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@dtest: btest
-@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@	$(OBJCOPY) --only-keep-debug .libs/btest btest.debug
-@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@	$(OBJCOPY) --strip-debug --add-gnu-debuglink=btest.debug .libs/btest dtest
+@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@dtest: btest_static
+@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@	$(OBJCOPY) --only-keep-debug btest_static btest.debug
+@HAVE_OBJCOPY_DEBUGLINK_TRUE@@NATIVE_TRUE@	$(OBJCOPY) --strip-debug --add-gnu-debuglink=btest.debug btest_static dtest
 
 # We can't use automake's automatic dependency tracking, because it
 # breaks when using bootstrap-lean.  Automatic dependency tracking

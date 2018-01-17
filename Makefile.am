@@ -29,7 +29,7 @@
 # IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-ACLOCAL_AMFLAGS = -I .. -I ../config
+ACLOCAL_AMFLAGS = -I config
 
 AM_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) $(PIC_FLAG)
 
@@ -84,6 +84,7 @@ libbacktrace_la_DEPENDENCIES = $(libbacktrace_la_LIBADD)
 # Testsuite.
 
 check_PROGRAMS =
+CLEANFILES =
 
 TESTS = $(check_PROGRAMS)
 
@@ -94,6 +95,13 @@ btest_CFLAGS = $(AM_CFLAGS) -g -O
 btest_LDADD = libbacktrace.la
 
 check_PROGRAMS += btest
+
+btest_static_SOURCES = btest.c testlib.c
+btest_static_CFLAGS = $(AM_CFLAGS) -g -O
+btest_static_LDADD = libbacktrace.la
+btest_static_LDFLAGS = -static-libtool-libs
+
+check_PROGRAMS += btest_static
 
 stest_SOURCES = stest.c
 stest_LDADD = libbacktrace.la
@@ -122,6 +130,8 @@ gen_edtest2_build: $(srcdir)/edtest2.c
 	$(SHELL) $(srcdir)/move-if-change tmp-edtest2_build.c edtest2_build.c
 	echo timestamp > $@
 
+CLEANFILES += edtest2_build.c gen_edtest2_build
+
 if HAVE_PTHREAD
 
 check_PROGRAMS += ttest
@@ -136,9 +146,11 @@ if HAVE_OBJCOPY_DEBUGLINK
 
 TESTS += dtest
 
-dtest: btest
-	$(OBJCOPY) --only-keep-debug .libs/btest btest.debug
-	$(OBJCOPY) --strip-debug --add-gnu-debuglink=btest.debug .libs/btest dtest
+dtest: btest_static
+	$(OBJCOPY) --only-keep-debug btest_static btest.debug
+	$(OBJCOPY) --strip-debug --add-gnu-debuglink=btest.debug btest_static dtest
+
+CLEANFILES += dtest btest.debug
 
 endif HAVE_OBJCOPY_DEBUGLINK
 
