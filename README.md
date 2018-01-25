@@ -1,7 +1,10 @@
 # libbacktrace
 A C library that may be linked into a C/C++ program to produce symbolic backtraces
 
-Initially written by Ian Lance Taylor <iant@golang.org>
+Initially written by Ian Lance Taylor <iant@golang.org>.
+
+This is version 1.0.
+It is likely that this will always be version 1.0.
 
 The libbacktrace library may be linked into a program or library and
 used to produce symbolic backtraces.
@@ -20,7 +23,7 @@ will work.
 See the source file backtrace-supported.h.in for the macros that it
 defines.
 
-As of September 2016, libbacktrace only supports ELF and PE/COFF
+As of January 2018, libbacktrace only supports ELF, PE/COFF, and XCOFF
 executables with DWARF debugging information.
 The library is written to make it straightforward to add support for
 other object file and debugging formats.
