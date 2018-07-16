@@ -3,3 +3,8 @@
 *.lo
 *.a
 *.la
+
+backtrace-supported\.h
+
+config\.h
+
