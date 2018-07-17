@@ -76,8 +76,11 @@ else()
 endif()
 
 # Generate backtrace-supported.h and config.h
+# backtrace-supported.h.in has syntax which works with CMake out of the box so
+# let's not duplicate things unnecessarily.
+# config.h.in ain't parsed properly so we need slightly different version.
 configure_file(
-	${CMAKE_CURRENT_SOURCE_DIR}/backtrace-supported.h.cmake
+	${CMAKE_CURRENT_SOURCE_DIR}/backtrace-supported.h.in
 	${CMAKE_CURRENT_BINARY_DIR}/backtrace-supported.h
 )
 configure_file(
