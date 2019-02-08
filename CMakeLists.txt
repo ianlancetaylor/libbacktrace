@@ -12,7 +12,7 @@ file(GLOB sources
 	simple.c pecoff.c read.c alloc.c config.h
 )
 file(GLOB export_headers
-	${CMAKE_CURRENT_BINARY_DIR}/backtrace.h
+	${CMAKE_CURRENT_SOURCE_DIR}/backtrace.h
 	${CMAKE_CURRENT_BINARY_DIR}/backtrace-supported.h
 )
 
