@@ -7,11 +7,11 @@ project(backtrace)
 set(CMAKE_CXX_FLAGS "-DHAVE_CONFIG_H -funwind-tables -frandom-seed=mySeed -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -g -O2")
 set(CMAKE_C_FLAGS "-DHAVE_CONFIG_H -funwind-tables -frandom-seed=mySeed -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -g -O2")
 
-file(GLOB sources 
+set(sources
 	atomic.c dwarf.c fileline.c posix.c print.c sort.c state.c backtrace.c
 	simple.c pecoff.c read.c alloc.c config.h
 )
-file(GLOB export_headers
+set(export_headers
 	${CMAKE_CURRENT_SOURCE_DIR}/backtrace.h
 	${CMAKE_CURRENT_BINARY_DIR}/backtrace-supported.h
 )
