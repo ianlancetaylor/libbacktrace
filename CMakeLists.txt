@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.5)
 
-project(backtrace)
+project(backtrace C)
+
+# This file is a work in progress - some things may be broken,
+#so feel free to fix 'em by looking at configure.ac
 
 # Automake uses -frandom-seed initialized with file name of given file
 # but AFAIK it can't be done on CMake, so here's always same seed
@@ -8,18 +11,15 @@ set(CMAKE_CXX_FLAGS "-DHAVE_CONFIG_H -funwind-tables -frandom-seed=mySeed -W -Wa
 set(CMAKE_C_FLAGS "-DHAVE_CONFIG_H -funwind-tables -frandom-seed=mySeed -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -g -O2")
 
 set(sources
-	atomic.c dwarf.c fileline.c posix.c print.c sort.c state.c backtrace.c
-	simple.c pecoff.c read.c alloc.c config.h
+	atomic.c dwarf.c fileline.c posix.c print.c sort.c state.c config.h
 )
 set(export_headers
 	${CMAKE_CURRENT_SOURCE_DIR}/backtrace.h
 	${CMAKE_CURRENT_BINARY_DIR}/backtrace-supported.h
 )
 
-add_library(${PROJECT_NAME} ${sources} ${export_headers})
-include_directories(${PROJECT_NAME} ${CMAKE_CURRENT_BINARY_DIR})
-
 if(CMAKE_COMPILER_IS_GNUCC)
+	set(_GNU_SOURCE 1)
 	set(BACKTRACE_SUPPORTED 1)
 	
 	# Assume multi-threaded environment
@@ -30,46 +30,229 @@ if(CMAKE_COMPILER_IS_GNUCC)
 		
 	find_package(ZLIB)
 	if(ZLIB_FOUND)
-		SET(HAVE_LIBZ 1)
-		SET(HAVE_ZLIB 1)
-		target_link_libraries(${PROJECT_NAME} z)
+		set(HAVE_LIBZ 1)
+		set(HAVE_ZLIB 1)
 	else()
-		SET(HAVE_LIBZ 0)
-		SET(HAVE_ZLIB 0)
+		set(HAVE_LIBZ 0)
+		set(HAVE_ZLIB 0)
 	endif()
 	
 	if(WIN32)
 		# Typical MinGW config
 		# DWARF2 exception handling could be detected based on parsing gcc --version
 		set(BACKTRACE_USES_MALLOC 1)
-		SET(BACKTRACE_ELF_SIZE unused)
-		SET(BACKTRACE_XCOFF_SIZE unused)
-		SET(HAVE_ATOMIC_FUNCTIONS 1)
-		SET(HAVE_CLOCK_GETTIME 1)
-		SET(HAVE_DECL_STRNLEN 1)
-		SET(HAVE_DLFCN_H 0)
-		SET(HAVE_DL_ITERATE_PHDR 0)
-		SET(HAVE_FCNTL 0)
-		SET(HAVE_GETEXECNAME 0)
-		SET(HAVE_GETIPINFO 1)
-		SET(HAVE_INTTYPES_H 1)
-		SET(HAVE_LINK_H 0)
-		SET(HAVE_LOADQUERY 0)
-		SET(HAVE_LSTAT 0)
-		SET(HAVE_MEMORY_H 1)
-		SET(HAVE_READLINK 0)
-		SET(HAVE_STDINT_H 1)
-		SET(HAVE_STDLIB_H 1)
-		SET(HAVE_STRINGS_H 1)
-		SET(HAVE_STRING_H 1)
-		SET(HAVE_SYNC_FUNCTIONS 1)
-		SET(HAVE_SYS_LDR_H 0)
-		SET(HAVE_SYS_MMAN_H 0)
-		SET(HAVE_SYS_STAT_H 1)
-		SET(HAVE_SYS_TYPES_H 1)
-		SET(HAVE_UNISTD_H 1)
+		set(BACKTRACE_ELF_SIZE unused)
+		set(BACKTRACE_XCOFF_SIZE unused)
+
+		# TODO do those tests using CMake
+		set(HAVE_ATOMIC_FUNCTIONS 1)
+		set(HAVE_CLOCK_GETTIME 1)
+		set(HAVE_DECL_STRNLEN 1)
+		set(HAVE_DLFCN_H 0)
+		set(HAVE_DL_ITERATE_PHDR 0)
+		set(HAVE_FCNTL 0)
+		set(HAVE_GETEXECNAME 0)
+		set(HAVE_GETIPINFO 1)
+		set(HAVE_INTTYPES_H 1)
+		set(HAVE_LINK_H 0)
+		set(HAVE_LOADQUERY 0)
+		set(HAVE_LSTAT 0)
+		set(HAVE_MEMORY_H 1)
+		set(HAVE_READLINK 0)
+		set(HAVE_STDINT_H 1)
+		set(HAVE_STDLIB_H 1)
+		set(HAVE_STRINGS_H 1)
+		set(HAVE_STRING_H 1)
+		set(HAVE_SYNC_FUNCTIONS 1)
+		set(HAVE_SYS_LDR_H 0)
+		set(HAVE_SYS_MMAN_H 0)
+		set(HAVE_SYS_STAT_H 1)
+		set(HAVE_SYS_TYPES_H 1)
+		set(HAVE_UNISTD_H 1)
+
+		set(sources "${sources};backtrace.c;simple.c")
+		set(FORMAT_FILE "pecoff.c")
+		set(VIEW_FILE "read.c")
+		set(ALLOC_FILE "alloc.c")
 	else()
-		set(BACKTRACE_SUPPORTED 0)
+		# TODO make this code work on Windows - it's proper configure replacement
+		include(CheckIncludeFiles)
+		include(CheckFunctionExists)
+		include(CheckCSourceCompiles)
+		include(CheckLibraryExists)
+		include(CheckCCompilerFlag)
+
+		# Check some headers
+		check_include_files("unistd.h" HAVE_UNISTD_H)
+		check_include_files("sys/types.h" HAVE_SYS_TYPES_H)
+		check_include_files("sys/stat.h" HAVE_SYS_STAT_H)
+		check_include_files("string.h" HAVE_STRING_H)
+		check_include_files("strings.h" HAVE_STRINGS_H)
+		check_include_files("stdlib.h" HAVE_STDLIB_H)
+		check_include_files("stdint.h" HAVE_STDINT_H)
+		check_include_files("inttypes.h" HAVE_INTTYPES_H)
+		check_include_files("memory.h" HAVE_MEMORY_H)
+		check_include_files("dlfcn.h" HAVE_DLFCN_H)
+
+		# Check some functions
+		check_function_exists(
+			"readlink" HAVE_READLINK CMAKE_REQUIRED_INCLUDES "unistd.h"
+		)
+		check_function_exists(
+			"lstat" HAVE_READLINK CMAKE_REQUIRED_INCLUDES "sys/stat.h"
+		)
+		check_function_exists(
+			"strnlen" HAVE_DECL_STRNLEN CMAKE_REQUIRED_INCLUDES "string.h"
+		)
+
+		# Check unwind
+		check_include_files("unwind.h" UNWIND_HEADER_FOUND)
+		check_function_exists(
+			"_Unwind_Backtrace" UNWIND_FN_FOUND CMAKE_REQUIRED_INCLUDES
+		)
+		if((${UNWIND_HEADER_FOUND}) AND (${UNWIND_FN_FOUND}))
+			set(sources "${sources};backtrace.c;simple.c")
+		else()
+			set(sources "${sources};nounwind.c")
+			set(BACKTRACE_SUPPORTED 0)
+		endif()
+
+		# Check UnwindGetIPInfo
+		set(oldFlags ${CMAKE_REQUIRED_FLAGS})
+		set(CMAKE_REQUIRED_FLAGS "-Werror-implicit-function-declaration")
+		check_c_source_compiles("
+			#include \"unwind.h\"
+
+			struct _Unwind_Context *context;
+			int ip_before_insn = 0;
+
+			int main(void) {
+				return _Unwind_GetIPInfo (context, &ip_before_insn);
+			}
+		" HAVE_GETIPINFO)
+		set(CMAKE_REQUIRED_FLAGS ${oldFlags})
+
+		set(oldFlags ${CMAKE_REQUIRED_FLAGS})
+		set(CMAKE_REQUIRED_FLAGS "-funwind-tables")
+		CHECK_C_COMPILER_FLAG("" unwind_tables_supported)
+		if(unwind_tables_supported)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -funwind-tables")
+		endif()
+		set(CMAKE_REQUIRED_FLAGS ${oldFlags})
+
+		# Check threads
+		# TODO configure.ac checks hppa*-*-hpux* stuff, dunno what it is
+		check_c_source_compiles("
+			int i;
+			int main(void) {
+				__sync_bool_compare_and_swap (&i, i, i);
+				__sync_lock_test_and_set (&i, 1);
+				__sync_lock_release (&i);
+				return 0;
+			}
+		" HAVE_SYNC_FUNCTIONS)
+		if(${HAVE_SYNC_FUNCTIONS})
+			set(BACKTRACE_SUPPORTS_THREADS 1)
+		endif()
+
+		# Check __atomic support
+		check_c_source_compiles("
+			int i;
+			int main(void) {
+				__atomic_load_n (&i, __ATOMIC_ACQUIRE);
+				__atomic_store_n (&i, 1, __ATOMIC_RELEASE);
+				return 0;
+			}
+		" HAVE_ATOMIC_FUNCTIONS)
+
+		# The library needs to be able to read the executable itself.
+		# Determine executable format (elf32/elf64/pecoff)
+		if((${CMAKE_EXECUTABLE_FORMAT} STREQUAL "ELF"))
+			math(EXPR BACKTRACE_ELF_SIZE "${CMAKE_SIZEOF_VOID_P} * 8")
+			set(filetype "elf${BACKTRACE_ELF_SIZE}")
+			set(FORMAT_FILE "elf.c")
+			set(BACKTRACE_SUPPORTS_DATA 1)
+		else()
+			# TODO detect pecoff/xcoff in some way - especially on MinGW
+			message(
+				FATAL_ERROR "Unknown executable format: '${CMAKE_EXECUTABLE_FORMAT}'"
+			)
+		endif()
+		message(STATUS "Executable format: ${filetype}")
+
+		# mmap support
+		check_include_files("sys/mman.h" HAVE_SYS_MMAN_H)
+		if(HAVE_SYS_MMAN_H)
+			# TODO port from configure.ac: spu-*-*|*-*-msdosdjgpp
+			check_function_exists(
+				"mmap" have_mmap CMAKE_REQUIRED_INCLUDES "sys/mman.h"
+			)
+		endif()
+		if(NOT have_mmap)
+			set(VIEW_FILE "read.c")
+			set(ALLOC_FILE "alloc.c")
+		else()
+			set(VIEW_FILE "mmapio.c")
+			check_c_source_compiles("
+				#include <sys/mman.h>
+				#if !defined(MAP_ANONYMOUS) && !defined(MAP_ANON)
+					#error no MAP_ANONYMOUS
+				#endif
+			" use_mmap_for_alloc)
+			if(use_mmap_for_alloc)
+				set(ALLOC_FILE "mmap.c")
+			else()
+				set(ALLOC_FILE "alloc.c")
+			endif()
+			if(${ALLOC_FILE} STREQUAL "alloc.c")
+				SET(BACKTRACE_USES_MALLOC 1)
+			else()
+				SET(BACKTRACE_USES_MALLOC 0)
+			endif()
+
+			# Check for dl_iterate_phdr
+			check_include_files("link.h" HAVE_LINK_H)
+			if(HAVE_LINK_H)
+				# TODO port from configure.ac: *-*-solaris2.10*
+				check_function_exists(
+					"dl_iterate_phdr" HAVE_DL_ITERATE_PHDR
+					CMAKE_REQUIRED_INCLUDES "link.h"
+				)
+			endif()
+
+			# Check for loadquery.
+			check_include_files("sys/ldr.h" HAVE_SYS_LDR_H)
+			check_function_exists(
+				"loadquery" HAVE_LOADQUERY CMAKE_REQUIRED_INCLUDES "sys/ldr.h"
+			)
+			
+			# Check for fcntl function.
+			check_function_exists(
+				"fcntl" HAVE_FCNTL CMAKE_REQUIRED_INCLUDES "fcntl.h"
+			)
+			
+			# Check for getexecname function.
+			check_function_exists(
+				"getexecname" HAVE_GETEXECNAME CMAKE_REQUIRED_INCLUDES "stdlib.h"
+			)
+
+			# Check for the clock_gettime function.
+			check_library_exists(rt clock_gettime "time.h" HAVE_CLOCK_GETTIME)
+			if (HAVE_CLOCK_GETTIME)
+					set(CLOCK_GETTIME_LINK "-lrt")
+			else()
+					# might also be in libc
+					check_library_exists(c clock_gettime "" HAVE_CLOCK_GETTIME)
+			endif()
+
+			# Test whether the compiler supports the -pthread option
+			set(CMAKE_THREAD_PREFER_PTHREAD ON)
+			set(THREADS_PREFER_PTHREAD_FLAG ON)
+			find_package(Threads)
+			if(CMAKE_USE_PTHREADS_INIT)
+				set(HAVE_PTHREAD 1)
+			endif()
+		endif()
 	endif()
 else()
 	set(BACKTRACE_SUPPORTED 0)
@@ -88,22 +271,33 @@ configure_file(
 	${CMAKE_CURRENT_BINARY_DIR}/config.h
 )
 
+# Build commands
+add_library(backtrace ${sources} ${FORMAT_FILE} ${VIEW_FILE} ${ALLOC_FILE} ${export_headers})
+include_directories(backtrace ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(backtrace ${CLOCK_GETTIME_LINK})
+if(CMAKE_USE_PTHREADS_INIT)
+	target_link_libraries(backtrace ${CMAKE_THREAD_LIBS_INIT})
+endif()
+if(ZLIB_FOUND)
+	target_link_libraries(backtrace z)
+endif()
+
 #install libbacktrace and header files
 set(INSTALL_LIB_DIR lib/libbacktrace)
 set(INSTALL_INCLUDE_DIR include/libbacktrace)
 set(INSTALL_CMAKE_DIR CMake)
 
 # Install CMake files
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS backtrace
 	DESTINATION ${INSTALL_LIB_DIR}
-	EXPORT lib${PROJECT_NAME}-targets
+	EXPORT libbacktrace-targets
 )
-install(EXPORT lib${PROJECT_NAME}-targets DESTINATION ${INSTALL_CMAKE_DIR})
+install(EXPORT libbacktrace-targets DESTINATION ${INSTALL_CMAKE_DIR})
 install(FILES
-	${CMAKE_SOURCE_DIR}/cmake/lib${PROJECT_NAME}Config.cmake
-	${CMAKE_SOURCE_DIR}/cmake/lib${PROJECT_NAME}ConfigVersion.cmake
+	${CMAKE_SOURCE_DIR}/cmake/libbacktraceConfig.cmake
+	${CMAKE_SOURCE_DIR}/cmake/libbacktraceConfigVersion.cmake
 	DESTINATION ${INSTALL_CMAKE_DIR}
 )
 
-install(TARGETS ${PROJECT_NAME} DESTINATION "${INSTALL_LIB_DIR}")
+install(TARGETS backtrace DESTINATION "${INSTALL_LIB_DIR}")
 install(FILES ${export_headers} DESTINATION "${INSTALL_INCLUDE_DIR}")
