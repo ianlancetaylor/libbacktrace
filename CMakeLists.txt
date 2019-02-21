@@ -167,7 +167,7 @@ if(CMAKE_COMPILER_IS_GNUCC)
 
 		# The library needs to be able to read the executable itself.
 		# Determine executable format (elf32/elf64/pecoff)
-		if((${CMAKE_EXECUTABLE_FORMAT} STREQUAL "ELF"))
+		if(("${CMAKE_EXECUTABLE_FORMAT}" STREQUAL "ELF"))
 			math(EXPR BACKTRACE_ELF_SIZE "${CMAKE_SIZEOF_VOID_P} * 8")
 			set(filetype "elf${BACKTRACE_ELF_SIZE}")
 			set(FORMAT_FILE "elf.c")
