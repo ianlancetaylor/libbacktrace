@@ -345,7 +345,7 @@ coff_initialize_syminfo (struct backtrace_state *state,
 			 const b_coff_external_symbol *syms, size_t syms_size,
 			 const unsigned char *strtab, size_t strtab_size,
 			 backtrace_error_callback error_callback,
-			 void *data, struct coff_syminfo_data *sdata)
+			 void *data, struct coff_syminfo_data *sdata, int magic)
 {
   size_t syms_count;
   char *coff_symstr;
@@ -436,8 +436,8 @@ coff_initialize_syminfo (struct backtrace_state *state,
 	  else
 	    name = isym.name;
 
-	  /* Strip leading '_'.  */
-	  if (name[0] == '_')
+    /* Strip leading '_' for PE only.  */
+	  if ((magic == PE_MAGIC) && (name[0] == '_'))
 	    name++;
 
 	  /* Symbol value is section relative, so we need to read the address
@@ -791,7 +791,7 @@ coff_add (struct backtrace_state *state, int descriptor,
 				    sects, sects_num,
 				    syms_view.data, syms_size,
 				    str_view.data, str_size,
-				    error_callback, data, sdata))
+				    error_callback, data, sdata, opt_hdr->magic))
 	{
 	  backtrace_free (state, sdata, sizeof *sdata, error_callback, data);
 	  goto fail;
