@@ -1,5 +1,5 @@
 /* xcoff.c -- Get debug data from an XCOFF file for backtraces.
-   Copyright (C) 2012-2018 Free Software Foundation, Inc.
+   Copyright (C) 2012-2019 Free Software Foundation, Inc.
    Adapted from elf.c.
 
 Redistribution and use in source and binary forms, with or without
@@ -338,27 +338,32 @@ struct xcoff_incl_vector
   size_t count;
 };
 
-/* Map a single PC value to a file/function/line.  */
+/* A growable vector of functions information.  */
 
-struct xcoff_line
+struct xcoff_func
 {
   /* PC.  */
   uintptr_t pc;
-  /* File name.  Many entries in the array are expected to point to
-     the same file name.  */
-  const char *filename;
+  /* The size of the function.  */
+  size_t size;
   /* Function name.  */
-  const char *function;
-  /* Line number.  */
-  int lineno;
+  const char *name;
+  /* File name.  */
+  const char *filename;
+  /* Pointer to first lnno entry.  */
+  uintptr_t lnnoptr;
+  /* Base address of containing section.  */
+  uintptr_t sect_base;
+  /* Starting source line number.  */
+  int lnno;
 };
 
-/* A growable vector of line number information.  This is used while
-   reading the line numbers.  */
+/* A growable vector of function information.  This is used while
+   reading the function symbols.  */
 
-struct xcoff_line_vector
+struct xcoff_func_vector
 {
-  /* Memory.  This is an array of struct xcoff_line.  */
+  /* Memory.  This is an array of struct xcoff_func.  */
   struct backtrace_vector vec;
   /* Number of valid mappings.  */
   size_t count;
@@ -370,20 +375,16 @@ struct xcoff_fileline_data
 {
   /* The data for the next file we know about.  */
   struct xcoff_fileline_data *next;
-  /* Line number information.  */
-  struct xcoff_line_vector vec;
-};
-
-/* An index of DWARF sections we care about.  */
-
-enum dwarf_section
-{
-  DWSECT_INFO,
-  DWSECT_LINE,
-  DWSECT_ABBREV,
-  DWSECT_RANGES,
-  DWSECT_STR,
-  DWSECT_MAX
+  /* Functions information.  */
+  struct xcoff_func_vector func_vec;
+  /* Include files information.  */
+  struct xcoff_incl_vector incl_vec;
+  /* Line numbers information.  */
+  const unsigned char *linenos;
+  size_t linenos_size;
+  uint64_t lnnoptr0;
+  /* Loader address.  */
+  uintptr_t base_address;
 };
 
 /* Information we gather for the DWARF sections we care about.  */
@@ -509,6 +510,7 @@ xcoff_syminfo (struct backtrace_state *state ATTRIBUTE_UNUSED, uintptr_t addr,
 {
   struct xcoff_syminfo_data *edata;
   struct xcoff_symbol *sym = NULL;
+  const char *name;
 
   if (!state->threaded)
     {
@@ -547,7 +549,13 @@ xcoff_syminfo (struct backtrace_state *state ATTRIBUTE_UNUSED, uintptr_t addr,
   if (sym == NULL)
     callback (data, addr, NULL, 0, 0);
   else
-    callback (data, addr, sym->name, sym->address, sym->size);
+    {
+      name = sym->name;
+      /* AIX prepends a '.' to function entry points, remove it.  */
+      if (name && *name == '.')
+	++name;
+      callback (data, addr, name, sym->address, sym->size);
+    }
 }
 
 /* Return the name of an XCOFF symbol.  */
@@ -640,43 +648,76 @@ xcoff_initialize_syminfo (struct backtrace_state *state,
   return 1;
 }
 
-/* Compare struct xcoff_line for qsort.  */
+/* Compare struct xcoff_func for qsort.  */
 
 static int
-xcoff_line_compare (const void *v1, const void *v2)
+xcoff_func_compare (const void *v1, const void *v2)
 {
-  const struct xcoff_line *ln1 = (const struct xcoff_line *) v1;
-  const struct xcoff_line *ln2 = (const struct xcoff_line *) v2;
+  const struct xcoff_func *fn1 = (const struct xcoff_func *) v1;
+  const struct xcoff_func *fn2 = (const struct xcoff_func *) v2;
 
-  if (ln1->pc < ln2->pc)
+  if (fn1->pc < fn2->pc)
     return -1;
-  else if (ln1->pc > ln2->pc)
+  else if (fn1->pc > fn2->pc)
     return 1;
   else
     return 0;
 }
 
-/* Find a PC in a line vector.  We always allocate an extra entry at
-   the end of the lines vector, so that this routine can safely look
-   at the next entry.  */
+/* Compare a PC against an xcoff_func for bsearch.  */
 
 static int
-xcoff_line_search (const void *vkey, const void *ventry)
+xcoff_func_search (const void *vkey, const void *ventry)
 {
   const uintptr_t *key = (const uintptr_t *) vkey;
-  const struct xcoff_line *entry = (const struct xcoff_line *) ventry;
+  const struct xcoff_func *entry = (const struct xcoff_func *) ventry;
   uintptr_t pc;
 
   pc = *key;
   if (pc < entry->pc)
     return -1;
-  else if ((entry + 1)->pc == (uintptr_t) -1 || pc >= (entry + 1)->pc)
+  else if ((entry->size == 0 && pc > entry->pc)
+	   || (entry->size > 0 && pc >= entry->pc + entry->size))
     return 1;
   else
     return 0;
 }
 
-/* Look for a PC in the line vector for one module.  On success,
+/* Compare struct xcoff_incl for qsort.  */
+
+static int
+xcoff_incl_compare (const void *v1, const void *v2)
+{
+  const struct xcoff_incl *in1 = (const struct xcoff_incl *) v1;
+  const struct xcoff_incl *in2 = (const struct xcoff_incl *) v2;
+
+  if (in1->begin < in2->begin)
+    return -1;
+  else if (in1->begin > in2->begin)
+    return 1;
+  else
+    return 0;
+}
+
+/* Find a lnnoptr in an include file.  */
+
+static int
+xcoff_incl_search (const void *vkey, const void *ventry)
+{
+  const uintptr_t *key = (const uintptr_t *) vkey;
+  const struct xcoff_incl *entry = (const struct xcoff_incl *) ventry;
+  uintptr_t lnno;
+
+  lnno = *key;
+  if (lnno < entry->begin)
+    return -1;
+  else if (lnno > entry->end)
+    return 1;
+  else
+    return 0;
+}
+
+/* Look for a PC in the function vector for one module.  On success,
    call CALLBACK and return whatever it returns.  On error, call
    ERROR_CALLBACK and return 0.  Sets *FOUND to 1 if the PC is found,
    0 if not.  */
@@ -688,26 +729,82 @@ xcoff_lookup_pc (struct backtrace_state *state ATTRIBUTE_UNUSED,
 		 backtrace_error_callback error_callback ATTRIBUTE_UNUSED,
 		 void *data, int *found)
 {
-  const struct xcoff_line *ln;
+  const struct xcoff_incl *incl, *bincl;
+  const struct xcoff_func *fn;
+  const b_xcoff_lineno *lineno;
+  const unsigned char *lineptr;
   const char *function;
+  const char *filename;
+  uintptr_t lnnoptr, match;
+  uint32_t lnno = 0;
 
   *found = 1;
 
-  ln = (struct xcoff_line *) bsearch (&pc, fdata->vec.vec.base,
-				      fdata->vec.count,
-				      sizeof (struct xcoff_line),
-				      xcoff_line_search);
-  if (ln == NULL)
+  if ((pc & 3) != 0)
+    ++pc;
+
+  /* Find the function first.  */
+  fn = ((struct xcoff_func *)
+	bsearch (&pc, fdata->func_vec.vec.base, fdata->func_vec.count,
+		 sizeof (struct xcoff_func), xcoff_func_search));
+  if (fn == NULL)
     {
       *found = 0;
       return 0;
     }
 
-  function = ln->function;
+  filename = fn->filename;
+
+  /* Find the line number next.  */
+
+  /* Skip first entry that points to symtab.  */
+  lnnoptr = fn->lnnoptr + LINESZ;
+  match = lnnoptr;
+
+  lineptr = fdata->linenos + (lnnoptr - fdata->lnnoptr0);
+  while (lineptr + LINESZ <= fdata->linenos + fdata->linenos_size)
+    {
+      lineno = (const b_xcoff_lineno *) lineptr;
+      if (lineno->l_lnno == 0)
+	break;
+      if (pc <= fdata->base_address + lineno->l_addr.l_paddr - fn->sect_base)
+	break;
+      match = lnnoptr;
+      lnno = lineno->l_lnno;
+
+      lnnoptr += LINESZ;
+      lineptr += LINESZ;
+    }
+
+  /* If part of a function other than the beginning comes from an
+     include file, the line numbers are absolute, rather than
+     relative to the beginning of the function.  */
+  incl = ((struct xcoff_incl *)
+	  bsearch (&match, fdata->incl_vec.vec.base,
+		   fdata->incl_vec.count, sizeof (struct xcoff_incl),
+		   xcoff_incl_search));
+  if (incl != NULL)
+    {
+      bincl = ((struct xcoff_incl *)
+	       bsearch (&fn->lnnoptr, fdata->incl_vec.vec.base,
+			fdata->incl_vec.count, sizeof (struct xcoff_incl),
+			xcoff_incl_search));
+      if (bincl != NULL && strcmp (incl->filename, bincl->filename) == 0)
+	{
+	  lnno += fn->lnno - 1;
+	}
+      filename = incl->filename;
+    }
+  else
+    {
+      lnno += fn->lnno - 1;
+    }
+
+  function = fn->name;
   /* AIX prepends a '.' to function entry points, remove it.  */
-  if (*function == '.')
+  if (function != NULL && *function == '.')
     ++function;
-  return callback (data, pc, ln->filename, ln->lineno, function);
+  return callback (data, pc, filename, lnno, function);
 }
 
 /* Return the file/line information for a PC using the XCOFF lineno
@@ -760,146 +857,7 @@ xcoff_fileline (struct backtrace_state *state, uintptr_t pc,
   return callback (data, pc, NULL, 0, NULL);
 }
 
-/* Compare struct xcoff_incl for qsort.  */
-
-static int
-xcoff_incl_compare (const void *v1, const void *v2)
-{
-  const struct xcoff_incl *in1 = (const struct xcoff_incl *) v1;
-  const struct xcoff_incl *in2 = (const struct xcoff_incl *) v2;
-
-  if (in1->begin < in2->begin)
-    return -1;
-  else if (in1->begin > in2->begin)
-    return 1;
-  else
-    return 0;
-}
-
-/* Find a lnnoptr in an include file.  */
-
-static int
-xcoff_incl_search (const void *vkey, const void *ventry)
-{
-  const uintptr_t *key = (const uintptr_t *) vkey;
-  const struct xcoff_incl *entry = (const struct xcoff_incl *) ventry;
-  uintptr_t lnno;
-
-  lnno = *key;
-  if (lnno < entry->begin)
-    return -1;
-  else if (lnno > entry->end)
-    return 1;
-  else
-    return 0;
-}
-
-/* Add a new mapping to the vector of line mappings that we are
-   building.  Returns 1 on success, 0 on failure.  */
-
-static int
-xcoff_add_line (struct backtrace_state *state, uintptr_t pc,
-		const char *filename, const char *function, uint32_t lnno,
-		backtrace_error_callback error_callback, void *data,
-		struct xcoff_line_vector *vec)
-{
-  struct xcoff_line *ln;
-
-  ln = ((struct xcoff_line *)
-	backtrace_vector_grow (state, sizeof (struct xcoff_line),
-			       error_callback, data, &vec->vec));
-  if (ln == NULL)
-    return 0;
-
-  ln->pc = pc;
-  ln->filename = filename;
-  ln->function = function;
-  ln->lineno = lnno;
-
-  ++vec->count;
-
-  return 1;
-}
-
-/* Add the line number entries for a function to the line vector.  */
-
-static int
-xcoff_process_linenos (struct backtrace_state *state, uintptr_t base_address,
-		       const b_xcoff_syment *fsym, const char *filename,
-		       const b_xcoff_scnhdr *sects,
-		       const unsigned char *strtab, size_t strtab_size,
-		       uint32_t fcn_lnno, struct xcoff_incl_vector *vec,
-		       struct xcoff_line_vector *lvec,
-		       const unsigned char *linenos, size_t linenos_size,
-		       uintptr_t lnnoptr0,
-		       backtrace_error_callback error_callback, void *data)
-{
-  const b_xcoff_auxent *aux;
-  const b_xcoff_lineno *lineno;
-  const unsigned char *lineptr;
-  const char *function;
-  struct xcoff_incl *incl = NULL;
-  uintptr_t lnnoptr;
-  uintptr_t pc;
-  uint32_t lnno;
-  int begincl;
-
-  aux = (const b_xcoff_auxent *) (fsym + 1);
-  lnnoptr = aux->x_fcn.x_lnnoptr;
-
-  if (lnnoptr < lnnoptr0 || lnnoptr + LINESZ > lnnoptr0 + linenos_size)
-    return 0;
-
-  function = xcoff_symname (fsym, strtab, strtab_size);
-  if (function == NULL)
-    return 0;
-
-  /* Skip first entry that points to symtab.  */
-
-  lnnoptr += LINESZ;
-
-  lineptr = linenos + (lnnoptr - lnnoptr0);
-
-  begincl = -1;
-  while (lineptr + LINESZ <= linenos + linenos_size)
-    {
-      lineno = (const b_xcoff_lineno *) lineptr;
-
-      lnno = lineno->l_lnno;
-      if (lnno == 0)
-	  break;
-
-      /* If part of a function other than the beginning comes from an
-	 include file, the line numbers are absolute, rather than
-	 relative to the beginning of the function.  */
-      incl = (struct xcoff_incl *) bsearch (&lnnoptr, vec->vec.base,
-					    vec->count,
-					    sizeof (struct xcoff_incl),
-					    xcoff_incl_search);
-      if (begincl == -1)
-	begincl = incl != NULL;
-      if (incl != NULL)
-	{
-	  filename = incl->filename;
-	  if (begincl == 1)
-	    lnno += fcn_lnno - 1;
-	}
-      else
-	lnno += fcn_lnno - 1;
-
-      pc = base_address + lineno->l_addr.l_paddr
-	 - sects[fsym->n_scnum - 1].s_paddr;
-      xcoff_add_line (state, pc, filename, function, lnno, error_callback,
-		      data, lvec);
-
-      lnnoptr += LINESZ;
-      lineptr += LINESZ;
-    }
-
-  return 1;
-}
-
-/* Initialize the line vector info for xcoff_fileline.  */
+/* Initialize the function vector info for xcoff_fileline.  */
 
 static int
 xcoff_initialize_fileline (struct backtrace_state *state,
@@ -912,15 +870,15 @@ xcoff_initialize_fileline (struct backtrace_state *state,
 			   backtrace_error_callback error_callback, void *data)
 {
   struct xcoff_fileline_data *fdata;
-  struct xcoff_incl_vector vec;
-  struct xcoff_line *ln;
+  struct xcoff_func *fn;
   const b_xcoff_syment *fsym;
   const b_xcoff_auxent *aux;
   const char *filename;
   const char *name;
   struct xcoff_incl *incl;
   uintptr_t begin, end;
-  uintptr_t lnno;
+  uintptr_t lnno, lnnoptr;
+  uint32_t fsize;
   size_t i;
 
   fdata = ((struct xcoff_fileline_data *)
@@ -928,13 +886,17 @@ xcoff_initialize_fileline (struct backtrace_state *state,
 			    error_callback, data));
   if (fdata == NULL)
     return 0;
-
   memset (fdata, 0, sizeof *fdata);
-  memset (&vec, 0, sizeof vec);
-
-  /* Process include files first.  */
+  fdata->base_address = base_address;
+  fdata->linenos = linenos;
+  fdata->linenos_size = linenos_size;
+  fdata->lnnoptr0 = lnnoptr0;
 
   begin = 0;
+  filename = NULL;
+  fsym = NULL;
+  lnnoptr = 0;
+  fsize = 0;
   for (i = 0; i < nsyms; ++i)
     {
       const b_xcoff_syment *asym = &syms[i];
@@ -951,32 +913,18 @@ xcoff_initialize_fileline (struct backtrace_state *state,
 	    end = asym->n_value;
 	    incl = ((struct xcoff_incl *)
 		    backtrace_vector_grow (state, sizeof (struct xcoff_incl),
-					   error_callback, data, &vec.vec));
+					   error_callback, data,
+					   &fdata->incl_vec.vec));
 	    if (incl != NULL)
 	      {
 		incl->filename = xcoff_symname (asym, strtab, strtab_size);
 		incl->begin = begin;
 		incl->end = end;
-		++vec.count;
+		++fdata->incl_vec.count;
 	      }
 	    begin = 0;
 	    break;
-	}
 
-      i += asym->n_numaux;
-    }
-
-  backtrace_qsort (vec.vec.base, vec.count,
-		   sizeof (struct xcoff_incl), xcoff_incl_compare);
-
-  filename = NULL;
-  fsym = NULL;
-  for (i = 0; i < nsyms; ++i)
-    {
-      const b_xcoff_syment *asym = &syms[i];
-
-      switch (asym->n_sclass)
-	{
 	  case C_FILE:
 	    filename = xcoff_symname (asym, strtab, strtab_size);
 	    if (filename == NULL)
@@ -988,7 +936,7 @@ xcoff_initialize_fileline (struct backtrace_state *state,
 	       file auxiliary entry (by convention) contains the source
 	       file name.  */
 
-	    if (asym->n_numaux > 0 && !strcmp (filename, ".file"))
+	    if (asym->n_numaux > 0 && strcmp (filename, ".file") == 0)
 	      {
 		aux = (const b_xcoff_auxent *) (asym + 1);
 		if (aux->x_file._x.x_zeroes != 0)
@@ -1010,10 +958,20 @@ xcoff_initialize_fileline (struct backtrace_state *state,
 	  case C_HIDEXT:
 	  case C_WEAKEXT:
 	    fsym = NULL;
-	    if (!ISFCN (asym->n_type) || asym->n_numaux == 0)
+	    lnnoptr = 0;
+	    fsize = 0;
+	    if (!ISFCN (asym->n_type) || asym->n_numaux == 0
+		|| asym->n_scnum <= 0)
 	      break;
 	    if (filename == NULL)
 	      break;
+	    aux = (const b_xcoff_auxent *) (asym + 1);
+	    lnnoptr = aux->x_fcn.x_lnnoptr;
+	    if (lnnoptr < lnnoptr0
+		|| lnnoptr + LINESZ > lnnoptr0 + linenos_size)
+	      break;
+	    /* x_fsize will be 0 if there is no debug information.  */
+	    fsize = aux->x_fcn.x_fsize;
 	    fsym = asym;
 	    break;
 
@@ -1023,8 +981,11 @@ xcoff_initialize_fileline (struct backtrace_state *state,
 	    if (fsym == NULL)
 	      break;
 	    name = xcoff_symname (asym, strtab, strtab_size);
-	    if (name == NULL)
-	      break;
+	    if (name == NULL || strcmp (name, ".bf") != 0)
+	      {
+		fsym = NULL;
+		break;
+	      }
 	    aux = (const b_xcoff_auxent *) (asym + 1);
 #if BACKTRACE_XCOFF_SIZE == 32
 	    lnno = (uint32_t) aux->x_block.x_lnnohi << 16
@@ -1032,39 +993,37 @@ xcoff_initialize_fileline (struct backtrace_state *state,
 #else
 	    lnno = aux->x_block.x_lnno;
 #endif
-	    if (!strcmp (name, ".bf"))
-	      {
-		xcoff_process_linenos (state, base_address, fsym, filename,
-				       sects, strtab, strtab_size, lnno, &vec,
-				       &fdata->vec, linenos, linenos_size,
-				       lnnoptr0, error_callback, data);
-	      }
-	    else if (!strcmp (name, ".ef"))
-	      {
-		fsym = NULL;
-	      }
+	    fn = ((struct xcoff_func *)
+		  backtrace_vector_grow (state, sizeof (struct xcoff_func),
+					 error_callback, data,
+					 &fdata->func_vec.vec));
+	    if (fn == NULL)
+	      break;
+	    fn->name = xcoff_symname (fsym, strtab, strtab_size);
+	    fn->filename = filename;
+	    fn->sect_base = sects[fsym->n_scnum - 1].s_paddr;
+	    fn->pc = base_address + fsym->n_value - fn->sect_base;
+	    fn->size = fsize;
+	    fn->lnno = lnno;
+	    fn->lnnoptr = lnnoptr;
+	    ++fdata->func_vec.count;
 	    break;
 	}
 
       i += asym->n_numaux;
     }
 
-  /* Allocate one extra entry at the end.  */
-  ln = ((struct xcoff_line *)
-	backtrace_vector_grow (state, sizeof (struct xcoff_line),
-			       error_callback, data, &fdata->vec.vec));
-  if (ln == NULL)
+  if (!backtrace_vector_release (state, &fdata->func_vec.vec, error_callback,
+				 data))
     goto fail;
-  ln->pc = (uintptr_t) -1;
-  ln->filename = NULL;
-  ln->function = NULL;
-  ln->lineno = 0;
+  backtrace_qsort (fdata->func_vec.vec.base, fdata->func_vec.count,
+		   sizeof (struct xcoff_func), xcoff_func_compare);
 
-  if (!backtrace_vector_release (state, &fdata->vec.vec, error_callback, data))
+  if (!backtrace_vector_release (state, &fdata->incl_vec.vec, error_callback,
+				 data))
     goto fail;
-
-  backtrace_qsort (fdata->vec.vec.base, fdata->vec.count,
-		   sizeof (struct xcoff_line), xcoff_line_compare);
+  backtrace_qsort (fdata->incl_vec.vec.base, fdata->incl_vec.count,
+		   sizeof (struct xcoff_incl), xcoff_incl_compare);
 
   if (!state->threaded)
     {
@@ -1129,7 +1088,7 @@ xcoff_add (struct backtrace_state *state, int descriptor, off_t offset,
   off_t str_off;
   off_t min_offset;
   off_t max_offset;
-  struct dwsect_info dwsect[DWSECT_MAX];
+  struct dwsect_info dwsect[DEBUG_MAX];
   size_t sects_size;
   size_t syms_size;
   int32_t str_size;
@@ -1140,6 +1099,7 @@ xcoff_add (struct backtrace_state *state, int descriptor, off_t offset,
   int dwarf_view_valid;
   int magic_ok;
   int i;
+  struct dwarf_sections dwarf_sections;
 
   *found_sym = 0;
 
@@ -1284,19 +1244,19 @@ xcoff_add (struct backtrace_state *state, int descriptor, off_t offset,
       switch (sects[i].s_flags & 0xffff0000)
 	{
 	  case SSUBTYP_DWINFO:
-	    idx = DWSECT_INFO;
+	    idx = DEBUG_INFO;
 	    break;
 	  case SSUBTYP_DWLINE:
-	    idx = DWSECT_LINE;
+	    idx = DEBUG_LINE;
 	    break;
 	  case SSUBTYP_DWABREV:
-	    idx = DWSECT_ABBREV;
+	    idx = DEBUG_ABBREV;
 	    break;
 	  case SSUBTYP_DWARNGE:
-	    idx = DWSECT_RANGES;
+	    idx = DEBUG_RANGES;
 	    break;
 	  case SSUBTYP_DWSTR:
-	    idx = DWSECT_STR;
+	    idx = DEBUG_STR;
 	    break;
 	  default:
 	    continue;
@@ -1317,7 +1277,7 @@ xcoff_add (struct backtrace_state *state, int descriptor, off_t offset,
 	goto fail;
       dwarf_view_valid = 1;
 
-      for (i = 0; i < (int) DWSECT_MAX; ++i)
+      for (i = 0; i < (int) DEBUG_MAX; ++i)
 	{
 	  if (dwsect[i].offset == 0)
 	    dwsect[i].data = NULL;
@@ -1326,25 +1286,30 @@ xcoff_add (struct backtrace_state *state, int descriptor, off_t offset,
 			      + (dwsect[i].offset - min_offset));
 	}
 
-      if (!backtrace_dwarf_add (state, 0,
-				dwsect[DWSECT_INFO].data,
-				dwsect[DWSECT_INFO].size,
+      memset (&dwarf_sections, 0, sizeof dwarf_sections);
+
+      dwarf_sections.data[DEBUG_INFO] = dwsect[DEBUG_INFO].data;
+      dwarf_sections.size[DEBUG_INFO] = dwsect[DEBUG_INFO].size;
 #if BACKTRACE_XCOFF_SIZE == 32
-				/* XXX workaround for broken lineoff */
-				dwsect[DWSECT_LINE].data - 4,
+      /* XXX workaround for broken lineoff */
+      dwarf_sections.data[DEBUG_LINE] = dwsect[DEBUG_LINE].data - 4;
 #else
-				/* XXX workaround for broken lineoff */
-				dwsect[DWSECT_LINE].data - 12,
+      /* XXX workaround for broken lineoff */
+      dwarf_sections.data[DEBUG_LINE] = dwsect[DEBUG_LINE].data - 12;
 #endif
-				dwsect[DWSECT_LINE].size,
-				dwsect[DWSECT_ABBREV].data,
-				dwsect[DWSECT_ABBREV].size,
-				dwsect[DWSECT_RANGES].data,
-				dwsect[DWSECT_RANGES].size,
-				dwsect[DWSECT_STR].data,
-				dwsect[DWSECT_STR].size,
+      dwarf_sections.size[DEBUG_LINE] = dwsect[DEBUG_LINE].size;
+      dwarf_sections.data[DEBUG_ABBREV] = dwsect[DEBUG_ABBREV].data;
+      dwarf_sections.size[DEBUG_ABBREV] = dwsect[DEBUG_ABBREV].size;
+      dwarf_sections.data[DEBUG_RANGES] = dwsect[DEBUG_RANGES].data;
+      dwarf_sections.size[DEBUG_RANGES] = dwsect[DEBUG_RANGES].size;
+      dwarf_sections.data[DEBUG_STR] = dwsect[DEBUG_STR].data;
+      dwarf_sections.size[DEBUG_STR] = dwsect[DEBUG_STR].size;
+
+      if (!backtrace_dwarf_add (state, 0, &dwarf_sections,
 				1, /* big endian */
-				error_callback, data, fileline_fn))
+				NULL, /* altlink */
+				error_callback, data, fileline_fn,
+				NULL /* returned fileline_entry */))
 	goto fail;
     }
 
@@ -1354,6 +1319,7 @@ xcoff_add (struct backtrace_state *state, int descriptor, off_t offset,
     {
       size_t linenos_size = (size_t) nlnno * LINESZ;
 
+      /* We never release this view.  */
       if (!backtrace_get_view (state, descriptor, offset + lnnoptr,
 			       linenos_size,
 			       error_callback, data, &linenos_view))
@@ -1366,9 +1332,6 @@ xcoff_add (struct backtrace_state *state, int descriptor, off_t offset,
 				     linenos_view.data, linenos_size,
 				     lnnoptr, error_callback, data))
 	*fileline_fn = xcoff_fileline;
-
-      backtrace_release_view (state, &linenos_view, error_callback, data);
-      linenos_view_valid = 0;
     }
 
   backtrace_release_view (state, &sects_view, error_callback, data);
@@ -1621,7 +1584,8 @@ backtrace_initialize (struct backtrace_state *state,
       if (found_sym)
 	backtrace_atomic_store_pointer (&state->syminfo_fn, xcoff_syminfo);
       else
-	__sync_bool_compare_and_swap (&state->syminfo_fn, NULL, xcoff_nosyms);
+	(void) __sync_bool_compare_and_swap (&state->syminfo_fn, NULL,
+					     xcoff_nosyms);
     }
 
   if (!state->threaded)

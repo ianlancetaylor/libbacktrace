@@ -35,38 +35,3 @@ AC_DEFUN([GCC_CHECK_UNWIND_GETIPINFO], [
     AC_DEFINE(HAVE_GETIPINFO, 1, [Define if _Unwind_GetIPInfo is available.])
   fi
 ])
-
-# ACX_PROG_CC_WARNING_OPTS(WARNINGS, [VARIABLE = WARN_CFLAGS])
-#   Sets @VARIABLE@ to the subset of the given options which the
-#   compiler accepts.
-AC_DEFUN([ACX_PROG_CC_WARNING_OPTS],
-[AC_REQUIRE([AC_PROG_CC])dnl
-AC_LANG_PUSH(C)
-m4_pushdef([acx_Var], [m4_default([$2], [WARN_CFLAGS])])dnl
-AC_SUBST(acx_Var)dnl
-m4_expand_once([acx_Var=
-],m4_quote(acx_Var=))dnl
-save_CFLAGS="$CFLAGS"
-for real_option in $1; do
-  # Do the check with the no- prefix removed since gcc silently
-  # accepts any -Wno-* option on purpose
-  case $real_option in
-    -Wno-*) option=-W`expr x$real_option : 'x-Wno-\(.*\)'` ;;
-    *) option=$real_option ;;
-  esac
-  AS_VAR_PUSHDEF([acx_Woption], [acx_cv_prog_cc_warning_$option])
-  AC_CACHE_CHECK([whether $CC supports $option], acx_Woption,
-    [CFLAGS="$option"
-    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([],[])],
-      [AS_VAR_SET(acx_Woption, yes)],
-      [AS_VAR_SET(acx_Woption, no)])
-  ])
-  AS_IF([test AS_VAR_GET(acx_Woption) = yes],
-        [acx_Var="$acx_Var${acx_Var:+ }$real_option"])
-  AS_VAR_POPDEF([acx_Woption])dnl
-done
-CFLAGS="$save_CFLAGS"
-m4_popdef([acx_Var])dnl
-AC_LANG_POP(C)
-])# ACX_PROG_CC_WARNING_OPTS
-

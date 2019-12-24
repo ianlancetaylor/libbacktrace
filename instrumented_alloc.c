@@ -1,6 +1,6 @@
-/* read.c -- File views without mmap.
-   Copyright (C) 2012-2019 Free Software Foundation, Inc.
-   Written by Ian Lance Taylor, Google.
+/* instrumented_alloc.c -- Memory allocation instrumented to fail when
+   requested, for testing purposes.
+   Copyright (C) 2018-2019 Free Software Foundation, Inc.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -30,73 +30,85 @@ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.  */
 
+/* Include all the header files of alloc here, to make sure they're not
+   processed when including alloc.c below, such that the redefinitions of malloc
+   and realloc are only effective in alloc.c itself.  This does not work for
+   config.h, because it's not wrapped in "#ifndef CONFIG_H\n#define CONFIG_H"
+   and "#endif" but that does not seem to be harmful.  */
+
 #include "config.h"
 
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/types.h>
-#include <unistd.h>
+#include <inttypes.h>
 
 #include "backtrace.h"
 #include "internal.h"
 
-/* This file implements file views when mmap is not available.  */
+extern void *instrumented_malloc (size_t size);
+extern void *instrumented_realloc (void *ptr, size_t size);
 
-/* Create a view of SIZE bytes from DESCRIPTOR at OFFSET.  */
+#define malloc instrumented_malloc
+#define realloc instrumented_realloc
+#include "alloc.c"
+#undef malloc
+#undef realloc
 
-int
-backtrace_get_view (struct backtrace_state *state, int descriptor,
-		    off_t offset, uint64_t size,
-		    backtrace_error_callback error_callback,
-		    void *data, struct backtrace_view *view)
+static uint64_t nr_allocs = 0;
+static uint64_t fail_at_alloc = 0;
+
+extern int at_fail_alloc_p (void);
+extern uint64_t get_nr_allocs (void);
+extern void set_fail_at_alloc (uint64_t);
+
+void *
+instrumented_malloc (size_t size)
 {
-  ssize_t got;
+  void *res;
 
-  if ((uint64_t) (size_t) size != size)
-    {
-      error_callback (data, "file size too large", 0);
-      return 0;
-    }
+  if (at_fail_alloc_p ())
+    return NULL;
 
-  if (lseek (descriptor, offset, SEEK_SET) < 0)
-    {
-      error_callback (data, "lseek", errno);
-      return 0;
-    }
+  res = malloc (size);
+  if (res != NULL)
+    nr_allocs++;
 
-  view->base = backtrace_alloc (state, size, error_callback, data);
-  if (view->base == NULL)
-    return 0;
-  view->data = view->base;
-  view->len = size;
-
-  got = read (descriptor, view->base, size);
-  if (got < 0)
-    {
-      error_callback (data, "read", errno);
-      free (view->base);
-      return 0;
-    }
-
-  if ((size_t) got < size)
-    {
-      error_callback (data, "file too short", 0);
-      free (view->base);
-      return 0;
-    }
-
-  return 1;
+  return res;
 }
 
-/* Release a view read by backtrace_get_view.  */
+void *
+instrumented_realloc (void *ptr, size_t size)
+{
+  void *res;
+
+  if (size != 0)
+    {
+      if (at_fail_alloc_p ())
+	return NULL;
+    }
+
+  res = realloc (ptr, size);
+  if (res != NULL)
+    nr_allocs++;
+
+  return res;
+}
+
+int
+at_fail_alloc_p (void)
+{
+  return fail_at_alloc == nr_allocs + 1;
+}
+
+uint64_t
+get_nr_allocs (void)
+{
+  return nr_allocs;
+}
 
 void
-backtrace_release_view (struct backtrace_state *state,
-			struct backtrace_view *view,
-			backtrace_error_callback error_callback,
-			void *data)
+set_fail_at_alloc (uint64_t nr)
 {
-  backtrace_free (state, view->base, view->len, error_callback, data);
-  view->data = NULL;
-  view->base = NULL;
+  fail_at_alloc = nr;
 }

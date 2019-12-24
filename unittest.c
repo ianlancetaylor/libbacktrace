@@ -1,6 +1,5 @@
-/* print.c -- Print the current backtrace.
-   Copyright (C) 2012-2019 Free Software Foundation, Inc.
-   Written by Ian Lance Taylor, Google.
+/* unittest.c -- Test for libbacktrace library
+   Copyright (C) 2018-2019 Free Software Foundation, Inc.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -30,63 +29,64 @@ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.  */
 
-#include "config.h"
-
+#include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
+#include <unistd.h>
+
+#include "filenames.h"
 
 #include "backtrace.h"
+#include "backtrace-supported.h"
+
+#include "testlib.h"
+
 #include "internal.h"
 
-/* Passed to callbacks.  */
-
-struct print_data
-{
-  struct backtrace_state *state;
-  FILE *f;
-};
-
-/* Print one level of a backtrace.  */
-
-static int
-print_callback (void *data, uintptr_t pc, const char *filename, int lineno,
-		const char *function)
-{
-  struct print_data *pdata = (struct print_data *) data;
-
-  fprintf (pdata->f, "0x%lx %s\n\t%s:%d\n",
-	   (unsigned long) pc,
-	   function == NULL ? "???" : function,
-	   filename == NULL ? "???" : filename,
-	   lineno);
-  return 0;
-}
-
-/* Print errors to stderr.  */
+static unsigned count;
 
 static void
-error_callback (void *data, const char *msg, int errnum)
+error_callback (void *vdata ATTRIBUTE_UNUSED, const char *msg ATTRIBUTE_UNUSED,
+		int errnum ATTRIBUTE_UNUSED)
 {
-  struct print_data *pdata = (struct print_data *) data;
-
-  if (pdata->state->filename != NULL)
-    fprintf (stderr, "%s: ", pdata->state->filename);
-  fprintf (stderr, "libbacktrace: %s", msg);
-  if (errnum > 0)
-    fprintf (stderr, ": %s", strerror (errnum));
-  fputc ('\n', stderr);
+  ++count;
 }
 
-/* Print a backtrace.  */
-
-void __attribute__((noinline))
-backtrace_print (struct backtrace_state *state, int skip, FILE *f)
+static int
+test1 (void)
 {
-  struct print_data data;
+  int res;
+  int failed;
 
-  data.state = state;
-  data.f = f;
-  backtrace_full (state, skip + 1, print_callback, error_callback,
-		  (void *) &data);
+  struct backtrace_vector vec;
+
+  memset (&vec, 0, sizeof vec);
+
+  backtrace_vector_grow (state, 100, error_callback, NULL, &vec);
+  vec.alc += vec.size;
+  vec.size = 0;
+
+  count = 0;
+  res = backtrace_vector_release (state, &vec, error_callback, NULL);
+  failed = res != 1 || count != 0 || vec.base != NULL;
+
+  printf ("%s: unittest backtrace_vector_release size == 0\n",
+	  failed ? "FAIL": "PASS");
+
+  if (failed)
+    ++failures;
+
+  return failures;
+}
+
+int
+main (int argc ATTRIBUTE_UNUSED, char **argv)
+{
+  state = backtrace_create_state (argv[0], BACKTRACE_SUPPORTS_THREADS,
+				  error_callback_create, NULL);
+
+  test1 ();
+
+  exit (failures ? EXIT_FAILURE : EXIT_SUCCESS);
 }

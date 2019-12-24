@@ -1,5 +1,5 @@
 /* elf.c -- Get debug data from an ELF file for backtraces.
-   Copyright (C) 2012-2018 Free Software Foundation, Inc.
+   Copyright (C) 2012-2019 Free Software Foundation, Inc.
    Written by Ian Lance Taylor, Google.
 
 Redistribution and use in source and binary forms, with or without
@@ -337,41 +337,19 @@ typedef struct
 
 #define ELFCOMPRESS_ZLIB 1
 
-/* An index of ELF sections we care about.  */
+/* Names of sections, indexed by enum dwarf_section in internal.h.  */
 
-enum debug_section
-{
-  DEBUG_INFO,
-  DEBUG_LINE,
-  DEBUG_ABBREV,
-  DEBUG_RANGES,
-  DEBUG_STR,
-
-  /* The old style compressed sections.  This list must correspond to
-     the list of normal debug sections.  */
-  ZDEBUG_INFO,
-  ZDEBUG_LINE,
-  ZDEBUG_ABBREV,
-  ZDEBUG_RANGES,
-  ZDEBUG_STR,
-
-  DEBUG_MAX
-};
-
-/* Names of sections, indexed by enum elf_section.  */
-
-static const char * const debug_section_names[DEBUG_MAX] =
+static const char * const dwarf_section_names[DEBUG_MAX] =
 {
   ".debug_info",
   ".debug_line",
   ".debug_abbrev",
   ".debug_ranges",
   ".debug_str",
-  ".zdebug_info",
-  ".zdebug_line",
-  ".zdebug_abbrev",
-  ".zdebug_ranges",
-  ".zdebug_str"
+  ".debug_addr",
+  ".debug_str_offsets",
+  ".debug_line_str",
+  ".debug_rnglists"
 };
 
 /* Information we gather for the sections we care about.  */
@@ -809,6 +787,8 @@ elf_readlink (struct backtrace_state *state, const char *filename,
     }
 }
 
+#define SYSTEM_BUILD_ID_DIR "/usr/lib/debug/.build-id/"
+
 /* Open a separate debug info file, using the build ID to find it.
    Returns an open file descriptor, or -1.
 
@@ -821,7 +801,7 @@ elf_open_debugfile_by_buildid (struct backtrace_state *state,
 			       backtrace_error_callback error_callback,
 			       void *data)
 {
-  const char * const prefix = "/usr/lib/debug/.build-id/";
+  const char * const prefix = SYSTEM_BUILD_ID_DIR;
   const size_t prefix_len = strlen (prefix);
   const char * const suffix = ".debug";
   const size_t suffix_len = strlen (suffix);
@@ -2638,7 +2618,8 @@ static int
 elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 	 uintptr_t base_address, backtrace_error_callback error_callback,
 	 void *data, fileline *fileline_fn, int *found_sym, int *found_dwarf,
-	 int exe, int debuginfo)
+	 struct dwarf_data **fileline_entry, int exe, int debuginfo,
+	 const char *with_buildid_data, uint32_t with_buildid_size)
 {
   struct backtrace_view ehdr_view;
   b_elf_ehdr ehdr;
@@ -2658,6 +2639,7 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   unsigned int dynsym_shndx;
   unsigned int i;
   struct debug_section_info sections[DEBUG_MAX];
+  struct debug_section_info zsections[DEBUG_MAX];
   struct backtrace_view symtab_view;
   int symtab_view_valid;
   struct backtrace_view strtab_view;
@@ -2670,6 +2652,11 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   int debuglink_view_valid;
   const char *debuglink_name;
   uint32_t debuglink_crc;
+  struct backtrace_view debugaltlink_view;
+  int debugaltlink_view_valid;
+  const char *debugaltlink_name;
+  const char *debugaltlink_buildid_data;
+  uint32_t debugaltlink_buildid_size;
   off_t min_offset;
   off_t max_offset;
   struct backtrace_view debug_view;
@@ -2677,6 +2664,7 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   unsigned int using_debug_view;
   uint16_t *zdebug_table;
   struct elf_ppc64_opd_data opd_data, *opd;
+  struct dwarf_sections dwarf_sections;
 
   if (!debuginfo)
     {
@@ -2694,6 +2682,10 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   debuglink_view_valid = 0;
   debuglink_name = NULL;
   debuglink_crc = 0;
+  debugaltlink_view_valid = 0;
+  debugaltlink_name = NULL;
+  debugaltlink_buildid_data = NULL;
+  debugaltlink_buildid_size = 0;
   debug_view_valid = 0;
   opd = NULL;
 
@@ -2803,7 +2795,7 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   shstr_size = shstrhdr->sh_size;
   shstr_off = shstrhdr->sh_offset;
 
-  if (!backtrace_get_view (state, descriptor, shstr_off, shstr_size,
+  if (!backtrace_get_view (state, descriptor, shstr_off, shstrhdr->sh_size,
 			   error_callback, data, &names_view))
     goto fail;
   names_view_valid = 1;
@@ -2813,6 +2805,7 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   dynsym_shndx = 0;
 
   memset (sections, 0, sizeof sections);
+  memset (zsections, 0, sizeof zsections);
 
   /* Look for the symbol table.  */
   for (i = 1; i < shnum; ++i)
@@ -2840,7 +2833,7 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 
       for (j = 0; j < (int) DEBUG_MAX; ++j)
 	{
-	  if (strcmp (name, debug_section_names[j]) == 0)
+	  if (strcmp (name, dwarf_section_names[j]) == 0)
 	    {
 	      sections[j].offset = shdr->sh_offset;
 	      sections[j].size = shdr->sh_size;
@@ -2849,10 +2842,23 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 	    }
 	}
 
+      if (name[0] == '.' && name[1] == 'z')
+	{
+	  for (j = 0; j < (int) DEBUG_MAX; ++j)
+	    {
+	      if (strcmp (name + 2, dwarf_section_names[j] + 1) == 0)
+		{
+		  zsections[j].offset = shdr->sh_offset;
+		  zsections[j].size = shdr->sh_size;
+		  break;
+		}
+	    }
+	}
+
       /* Read the build ID if present.  This could check for any
 	 SHT_NOTE section with the right note name and type, but gdb
 	 looks for a specific section name.  */
-      if (!debuginfo
+      if ((!debuginfo || with_buildid_data != NULL)
 	  && !buildid_view_valid
 	  && strcmp (name, ".note.gnu.build-id") == 0)
 	{
@@ -2868,10 +2874,19 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 	  if (note->type == NT_GNU_BUILD_ID
 	      && note->namesz == 4
 	      && strncmp (note->name, "GNU", 4) == 0
-	      && shdr->sh_size < 12 + ((note->namesz + 3) & ~ 3) + note->descsz)
+	      && shdr->sh_size <= 12 + ((note->namesz + 3) & ~ 3) + note->descsz)
 	    {
 	      buildid_data = &note->name[0] + ((note->namesz + 3) & ~ 3);
 	      buildid_size = note->descsz;
+	    }
+
+	  if (with_buildid_size != 0)
+	    {
+	      if (buildid_size != with_buildid_size)
+		goto fail;
+
+	      if (memcmp (buildid_data, with_buildid_data, buildid_size) != 0)
+		goto fail;
 	    }
 	}
 
@@ -2896,6 +2911,32 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 	    {
 	      debuglink_name = debuglink_data;
 	      debuglink_crc = *(const uint32_t*)(debuglink_data + crc_offset);
+	    }
+	}
+
+      if (!debugaltlink_view_valid
+	  && strcmp (name, ".gnu_debugaltlink") == 0)
+	{
+	  const char *debugaltlink_data;
+	  size_t debugaltlink_name_len;
+
+	  if (!backtrace_get_view (state, descriptor, shdr->sh_offset,
+				   shdr->sh_size, error_callback, data,
+				   &debugaltlink_view))
+	    goto fail;
+
+	  debugaltlink_view_valid = 1;
+	  debugaltlink_data = (const char *) debugaltlink_view.data;
+	  debugaltlink_name = debugaltlink_data;
+	  debugaltlink_name_len = strnlen (debugaltlink_data, shdr->sh_size);
+	  if (debugaltlink_name_len < shdr->sh_size)
+	    {
+	      /* Include terminating zero.  */
+	      debugaltlink_name_len += 1;
+
+	      debugaltlink_buildid_data
+		= debugaltlink_data + debugaltlink_name_len;
+	      debugaltlink_buildid_size = shdr->sh_size - debugaltlink_name_len;
 	    }
 	}
 
@@ -2993,8 +3034,12 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 	  if (debuglink_view_valid)
 	    backtrace_release_view (state, &debuglink_view, error_callback,
 				    data);
-	  ret = elf_add (state, NULL, d, base_address, error_callback, data,
-			 fileline_fn, found_sym, found_dwarf, 0, 1);
+	  if (debugaltlink_view_valid)
+	    backtrace_release_view (state, &debugaltlink_view, error_callback,
+				    data);
+	  ret = elf_add (state, "", d, base_address, error_callback, data,
+			 fileline_fn, found_sym, found_dwarf, NULL, 0, 1, NULL,
+			 0);
 	  if (ret < 0)
 	    backtrace_close (d, error_callback, data);
 	  else
@@ -3028,8 +3073,12 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 
 	  backtrace_release_view (state, &debuglink_view, error_callback,
 				  data);
-	  ret = elf_add (state, NULL, d, base_address, error_callback, data,
-			 fileline_fn, found_sym, found_dwarf, 0, 1);
+	  if (debugaltlink_view_valid)
+	    backtrace_release_view (state, &debugaltlink_view, error_callback,
+				    data);
+	  ret = elf_add (state, "", d, base_address, error_callback, data,
+			 fileline_fn, found_sym, found_dwarf, NULL, 0, 1, NULL,
+			 0);
 	  if (ret < 0)
 	    backtrace_close (d, error_callback, data);
 	  else
@@ -3044,8 +3093,41 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
       debuglink_view_valid = 0;
     }
 
+  struct dwarf_data *fileline_altlink = NULL;
+  if (debugaltlink_name != NULL)
+    {
+      int d;
+
+      d = elf_open_debugfile_by_debuglink (state, filename, debugaltlink_name,
+					   0, error_callback, data);
+      if (d >= 0)
+	{
+	  int ret;
+
+	  ret = elf_add (state, filename, d, base_address, error_callback, data,
+			 fileline_fn, found_sym, found_dwarf, &fileline_altlink,
+			 0, 1, debugaltlink_buildid_data,
+			 debugaltlink_buildid_size);
+	  backtrace_release_view (state, &debugaltlink_view, error_callback,
+				  data);
+	  debugaltlink_view_valid = 0;
+	  if (ret < 0)
+	    {
+	      backtrace_close (d, error_callback, data);
+	      return ret;
+	    }
+	}
+    }
+
+  if (debugaltlink_view_valid)
+    {
+      backtrace_release_view (state, &debugaltlink_view, error_callback, data);
+      debugaltlink_view_valid = 0;
+    }
+
   /* Read all the debug sections in a single view, since they are
-     probably adjacent in the file.  We never release this view.  */
+     probably adjacent in the file.  If any of sections are
+     uncompressed, we never release this view.  */
 
   min_offset = 0;
   max_offset = 0;
@@ -3053,13 +3135,22 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
     {
       off_t end;
 
-      if (sections[i].size == 0)
-	continue;
-      if (min_offset == 0 || sections[i].offset < min_offset)
-	min_offset = sections[i].offset;
-      end = sections[i].offset + sections[i].size;
-      if (end > max_offset)
-	max_offset = end;
+      if (sections[i].size != 0)
+	{
+	  if (min_offset == 0 || sections[i].offset < min_offset)
+	    min_offset = sections[i].offset;
+	  end = sections[i].offset + sections[i].size;
+	  if (end > max_offset)
+	    max_offset = end;
+	}
+      if (zsections[i].size != 0)
+	{
+	  if (min_offset == 0 || zsections[i].offset < min_offset)
+	    min_offset = zsections[i].offset;
+	  end = zsections[i].offset + zsections[i].size;
+	  if (end > max_offset)
+	    max_offset = end;
+	}
     }
   if (min_offset == 0 || max_offset == 0)
     {
@@ -3088,20 +3179,22 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 	{
 	  sections[i].data = ((const unsigned char *) debug_view.data
 			      + (sections[i].offset - min_offset));
-	  if (i < ZDEBUG_INFO)
-	    ++using_debug_view;
+	  ++using_debug_view;
 	}
+
+      if (zsections[i].size == 0)
+	zsections[i].data = NULL;
+      else
+	zsections[i].data = ((const unsigned char *) debug_view.data
+			     + (zsections[i].offset - min_offset));
     }
 
   /* Uncompress the old format (--compress-debug-sections=zlib-gnu).  */
 
   zdebug_table = NULL;
-  for (i = 0; i < ZDEBUG_INFO; ++i)
+  for (i = 0; i < (int) DEBUG_MAX; ++i)
     {
-      struct debug_section_info *pz;
-
-      pz = &sections[i + ZDEBUG_INFO - DEBUG_INFO];
-      if (sections[i].size == 0 && pz->size > 0)
+      if (sections[i].size == 0 && zsections[i].size > 0)
 	{
 	  unsigned char *uncompressed_data;
 	  size_t uncompressed_size;
@@ -3117,7 +3210,8 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 
 	  uncompressed_data = NULL;
 	  uncompressed_size = 0;
-	  if (!elf_uncompress_zdebug (state, pz->data, pz->size, zdebug_table,
+	  if (!elf_uncompress_zdebug (state, zsections[i].data,
+				      zsections[i].size, zdebug_table,
 				      error_callback, data,
 				      &uncompressed_data, &uncompressed_size))
 	    goto fail;
@@ -3129,7 +3223,7 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 
   /* Uncompress the official ELF format
      (--compress-debug-sections=zlib-gabi).  */
-  for (i = 0; i < ZDEBUG_INFO; ++i)
+  for (i = 0; i < (int) DEBUG_MAX; ++i)
     {
       unsigned char *uncompressed_data;
       size_t uncompressed_size;
@@ -3169,19 +3263,17 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
       debug_view_valid = 0;
     }
 
-  if (!backtrace_dwarf_add (state, base_address,
-			    sections[DEBUG_INFO].data,
-			    sections[DEBUG_INFO].size,
-			    sections[DEBUG_LINE].data,
-			    sections[DEBUG_LINE].size,
-			    sections[DEBUG_ABBREV].data,
-			    sections[DEBUG_ABBREV].size,
-			    sections[DEBUG_RANGES].data,
-			    sections[DEBUG_RANGES].size,
-			    sections[DEBUG_STR].data,
-			    sections[DEBUG_STR].size,
+  for (i = 0; i < (int) DEBUG_MAX; ++i)
+    {
+      dwarf_sections.data[i] = sections[i].data;
+      dwarf_sections.size[i] = sections[i].size;
+    }
+
+  if (!backtrace_dwarf_add (state, base_address, &dwarf_sections,
 			    ehdr.e_ident[EI_DATA] == ELFDATA2MSB,
-			    error_callback, data, fileline_fn))
+			    fileline_altlink,
+			    error_callback, data, fileline_fn,
+			    fileline_entry))
     goto fail;
 
   *found_dwarf = 1;
@@ -3199,6 +3291,8 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
     backtrace_release_view (state, &strtab_view, error_callback, data);
   if (debuglink_view_valid)
     backtrace_release_view (state, &debuglink_view, error_callback, data);
+  if (debugaltlink_view_valid)
+    backtrace_release_view (state, &debugaltlink_view, error_callback, data);
   if (buildid_view_valid)
     backtrace_release_view (state, &buildid_view, error_callback, data);
   if (debug_view_valid)
@@ -3269,7 +3363,7 @@ phdr_callback (struct dl_phdr_info *info, size_t size ATTRIBUTE_UNUSED,
 
   if (elf_add (pd->state, filename, descriptor, info->dlpi_addr,
 	       pd->error_callback, pd->data, &elf_fileline_fn, pd->found_sym,
-	       &found_dwarf, 0, 0))
+	       &found_dwarf, NULL, 0, 0, NULL, 0))
     {
       if (found_dwarf)
 	{
@@ -3297,7 +3391,8 @@ backtrace_initialize (struct backtrace_state *state, const char *filename,
   struct phdr_data pd;
 
   ret = elf_add (state, filename, descriptor, 0, error_callback, data,
-		 &elf_fileline_fn, &found_sym, &found_dwarf, 1, 0);
+		 &elf_fileline_fn, &found_sym, &found_dwarf, NULL, 1, 0, NULL,
+		 0);
   if (!ret)
     return 0;
 

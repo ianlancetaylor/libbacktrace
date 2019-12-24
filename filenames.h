@@ -44,6 +44,9 @@ POSSIBILITY OF SUCH DAMAGE.  */
 
 #if defined(__MSDOS__) || defined(_WIN32) || defined(__OS2__) || defined (__CYGWIN__)
 # define IS_DIR_SEPARATOR(c) ((c) == '/' || (c) == '\\')
+# define HAS_DRIVE_SPEC(f) ((f)[0] != '\0' && (f)[1] == ':')
+# define IS_ABSOLUTE_PATH(f) (IS_DIR_SEPARATOR((f)[0]) || HAS_DRIVE_SPEC(f))
 #else
 # define IS_DIR_SEPARATOR(c) ((c) == '/')
+# define IS_ABSOLUTE_PATH(f) (IS_DIR_SEPARATOR((f)[0]))
 #endif
