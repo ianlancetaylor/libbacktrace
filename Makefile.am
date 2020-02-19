@@ -57,6 +57,7 @@ BACKTRACE_FILES = \
 
 FORMAT_FILES = \
 	elf.c \
+	macho.c \
 	pecoff.c \
 	unknown.c \
 	xcoff.c
@@ -85,17 +86,27 @@ libbacktrace_la_DEPENDENCIES = $(libbacktrace_la_LIBADD)
 
 # Testsuite.
 
-# Add test to this variable, if you want it to be build.
+# Add a test to this variable if you want it to be built.
 check_PROGRAMS =
 
-# Add test to this variable, if you want it to be run.
+# Add a test to this variable if you want it to be run.
 TESTS =
 
-# Add test to this variable, if you want it to be build and run.
+# Add a test to this variable if you want it to be built and run.
 BUILDTESTS =
+
+# Add a file to this variable if you want it to be built for testing.
+check_DATA =
 
 # Flags to use when compiling test programs.
 libbacktrace_TEST_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) -g
+
+if HAVE_DSYMUTIL
+
+%.dSYM: %
+	$(DSYMUTIL) $<
+
+endif HAVE_DSYMUTIL
 
 if NATIVE
 check_LTLIBRARIES = libbacktrace_alloc.la
@@ -164,6 +175,12 @@ test_elf_64_LDADD = libbacktrace_noformat.la elf_64.lo
 
 BUILDTESTS += test_elf_64
 
+test_macho_SOURCES = test_format.c testlib.c
+test_macho_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_macho_LDADD = libbacktrace_noformat.la macho.lo
+
+BUILDTESTS += test_macho
+
 test_xcoff_32_SOURCES = test_format.c testlib.c
 test_xcoff_32_CFLAGS = $(libbacktrace_TEST_CFLAGS)
 test_xcoff_32_LDADD = libbacktrace_noformat.la xcoff_32.lo
@@ -221,6 +238,10 @@ allocfail.sh: allocfail
 
 TESTS += allocfail.sh
 
+if HAVE_DSYMUTIL
+check_DATA += allocfail.dSYM
+endif HAVE_DSYMUTIL
+
 if HAVE_ELF
 if HAVE_OBJCOPY_DEBUGLINK
 
@@ -253,6 +274,10 @@ btest_LDADD = libbacktrace.la
 
 BUILDTESTS += btest
 
+if HAVE_DSYMUTIL
+check_DATA += btest.dSYM
+endif HAVE_DSYMUTIL
+
 if HAVE_ELF
 
 btest_lto_SOURCES = btest.c testlib.c
@@ -268,6 +293,10 @@ btest_alloc_CFLAGS = $(libbacktrace_TEST_CFLAGS)
 btest_alloc_LDADD = libbacktrace_alloc.la
 
 BUILDTESTS += btest_alloc
+
+if HAVE_DSYMUTIL
+check_DATA += btest_alloc.dSYM
+endif HAVE_DSYMUTIL
 
 if HAVE_DWZ
 
@@ -295,11 +324,19 @@ stest_LDADD = libbacktrace.la
 
 BUILDTESTS += stest
 
+if HAVE_DSYMUTIL
+check_DATA += stest.dSYM
+endif HAVE_DSYMUTIL
+
 stest_alloc_SOURCES = $(stest_SOURCES)
 stest_alloc_CFLAGS = $(libbacktrace_TEST_CFLAGS)
 stest_alloc_LDADD = libbacktrace_alloc.la
 
 BUILDTESTS += stest_alloc
+
+if HAVE_DSYMUTIL
+check_DATA += stest_alloc.dSYM
+endif HAVE_DSYMUTIL
 
 if HAVE_ELF
 
@@ -330,9 +367,17 @@ edtest_LDADD = libbacktrace.la
 
 BUILDTESTS += edtest
 
+if HAVE_DSYMUTIL
+check_DATA += edtest.dSYM
+endif HAVE_DSYMUTIL
+
 edtest_alloc_SOURCES = $(edtest_SOURCES)
 edtest_alloc_CFLAGS = $(libbacktrace_TEST_CFLAGS)
 edtest_alloc_LDADD = libbacktrace_alloc.la
+
+if HAVE_DSYMUTIL
+check_DATA += edtest_alloc.dSYM
+endif HAVE_DSYMUTIL
 
 BUILDTESTS += edtest_alloc
 
@@ -350,11 +395,19 @@ ttest_SOURCES = ttest.c testlib.c
 ttest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -pthread
 ttest_LDADD = libbacktrace.la
 
+if HAVE_DSYMUTIL
+check_DATA += ttest.dSYM
+endif HAVE_DSYMUTIL
+
 BUILDTESTS += ttest_alloc
 
 ttest_alloc_SOURCES = $(ttest_SOURCES)
 ttest_alloc_CFLAGS = $(ttest_CFLAGS)
 ttest_alloc_LDADD = libbacktrace_alloc.la
+
+if HAVE_DSYMUTIL
+check_DATA += ttest_alloc.dSYM
+endif HAVE_DSYMUTIL
 
 endif HAVE_PTHREAD
 
@@ -410,11 +463,19 @@ dwarf5_LDADD = libbacktrace.la
 
 BUILDTESTS += dwarf5
 
+if HAVE_DSYMUTIL
+check_DATA += dwarf5.dSYM
+endif HAVE_DSYMUTIL
+
 dwarf5_alloc_SOURCES = $(dwarf5_SOURCES)
 dwarf5_alloc_CFLAGS = $(dwarf5_CFLAGS)
 dwarf5_alloc_LDADD = libbacktrace_alloc.la
 
 BUILDTESTS += dwarf5_alloc
+
+if HAVE_DSYMUTIL
+check_DATA += dwarf5_alloc.dSYM
+endif HAVE_DSYMUTIL
 
 endif
 
@@ -447,6 +508,7 @@ btest.lo: filenames.h backtrace.h backtrace-supported.h
 dwarf.lo: config.h filenames.h backtrace.h internal.h
 elf.lo: config.h backtrace.h internal.h
 fileline.lo: config.h backtrace.h internal.h
+macho.lo: config.h backtrace.h internal.h
 mmap.lo: config.h backtrace.h internal.h
 mmapio.lo: config.h backtrace.h internal.h
 nounwind.lo: config.h internal.h
