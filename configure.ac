@@ -476,6 +476,17 @@ AC_CHECK_LIB([z], [compress],
     [AC_DEFINE(HAVE_ZLIB, 1, [Define if -lz is available.])])
 AM_CONDITIONAL(HAVE_ZLIB, test "$ac_cv_lib_z_compress" = yes)
 
+AC_MSG_CHECKING([whether to support LZMA-compressed debug info])
+AC_ARG_ENABLE(minidebuginfo,
+AS_HELP_STRING([--enable-minidebuginfo], [Enables support for ELF's LZMA-compressed debug info]),, [enable_minidebuginfo=auto])
+AC_MSG_RESULT([$enable_minidebuginfo])
+if test x$enable_minidebuginfo = xyes; then
+   AC_CHECK_LIB(lzma, lzma_stream_buffer_decode,
+   AC_DEFINE(HAVE_LZMA, 1, [Define if you have liblzma]),
+   AC_MSG_FAILURE([liblzma not found]))
+fi
+AM_CONDITIONAL(HAVE_LZMA, test x$enable_minidebuginfo = xyes)
+
 dnl Test whether the linker supports the --compress_debug_sections option.
 AC_CACHE_CHECK([whether --compress-debug-sections is supported],
 [libgo_cv_ld_compress],
