@@ -2979,7 +2979,7 @@ struct xz_dictionary
 };
 
 /* Range decoder */
-struct xz_xz_rc_dec 
+struct xz_rc_dec 
 {
   uint32_t range;
   uint32_t code;
@@ -3152,7 +3152,7 @@ struct xz_dec_lzma2
     * bytes, but this is still the best order without sacrificing
     * the readability by splitting the structures.
     */
-  struct xz_xz_rc_dec rc;
+  struct xz_rc_dec rc;
   struct xz_dictionary dict;
   struct lzma2_dec lzma2;
   struct lzma_dec lzma;
@@ -4116,7 +4116,7 @@ xz_dict_flush(struct xz_dictionary *dict, struct xz_buf *b)
 
 /* Reset the range decoder. */
 static void 
-xz_rc_reset(struct xz_xz_rc_dec *rc)
+xz_rc_reset(struct xz_rc_dec *rc)
 {
   rc->range = (uint32_t)-1;
   rc->code = 0;
@@ -4128,7 +4128,7 @@ xz_rc_reset(struct xz_xz_rc_dec *rc)
  * read already. (Yes, the first byte gets completely ignored.)
  */
 static int 
-xz_rc_read_init(struct xz_xz_rc_dec *rc, struct xz_buf *b)
+xz_rc_read_init(struct xz_rc_dec *rc, struct xz_buf *b)
 {
   while (rc->init_bytes_left > 0) 
     {
@@ -4144,7 +4144,7 @@ xz_rc_read_init(struct xz_xz_rc_dec *rc, struct xz_buf *b)
 
 /* Return true if there may not be enough input for the next decoding loop. */
 static inline int 
-xz_rc_limit_exceeded(const struct xz_xz_rc_dec *rc)
+xz_rc_limit_exceeded(const struct xz_rc_dec *rc)
 {
   return rc->in_pos > rc->in_limit;
 }
@@ -4154,14 +4154,14 @@ xz_rc_limit_exceeded(const struct xz_xz_rc_dec *rc)
  * we have reached the end of the LZMA chunk.
  */
 static inline int 
-xz_rc_is_finished(const struct xz_xz_rc_dec *rc)
+xz_rc_is_finished(const struct xz_rc_dec *rc)
 {
   return rc->code == 0;
 }
 
 /* Read the next input byte if needed. */
 static inline void 
-xz_rc_normalize(struct xz_xz_rc_dec *rc)
+xz_rc_normalize(struct xz_rc_dec *rc)
 {
   if (rc->range < LZMA_RC_TOP_VALUE) {
     rc->range <<= LZMA_RC_SHIFT_BITS;
@@ -4181,7 +4181,7 @@ xz_rc_normalize(struct xz_xz_rc_dec *rc)
  * and it generates 10-20 % faster code than GCC 3.x from this file anyway.)
  */
 static inline int
-xz_rc_bit(struct xz_xz_rc_dec *rc, uint16_t *prob)
+xz_rc_bit(struct xz_rc_dec *rc, uint16_t *prob)
 {
   uint32_t bound;
   int bit;
@@ -4206,7 +4206,7 @@ xz_rc_bit(struct xz_xz_rc_dec *rc, uint16_t *prob)
 
 /* Decode a bittree starting from the most significant bit. */
 static inline uint32_t 
-xz_rc_bittree(struct xz_xz_rc_dec *rc, uint16_t *probs, uint32_t limit)
+xz_rc_bittree(struct xz_rc_dec *rc, uint16_t *probs, uint32_t limit)
 {
   uint32_t symbol;
   symbol = 1;
@@ -4224,7 +4224,7 @@ xz_rc_bittree(struct xz_xz_rc_dec *rc, uint16_t *probs, uint32_t limit)
 
 /* Decode a bittree starting from the least significant bit. */
 static inline void 
-xz_rc_bittree_reverse(struct xz_xz_rc_dec *rc,
+xz_rc_bittree_reverse(struct xz_rc_dec *rc,
 		   uint16_t *probs,
 		   uint32_t *dest, uint32_t limit)
 {
@@ -4251,7 +4251,7 @@ xz_rc_bittree_reverse(struct xz_xz_rc_dec *rc,
 
 /* Decode direct bits (fixed fifty-fifty probability) */
 static inline void 
-xz_xz_rc_direct(struct xz_xz_rc_dec *rc, uint32_t *dest, uint32_t limit)
+xz_rc_direct(struct xz_rc_dec *rc, uint32_t *dest, uint32_t limit)
 {
   uint32_t mask;
 
@@ -4401,7 +4401,7 @@ xz_lzma_match(struct xz_dec_lzma2 *s, uint32_t pos_state)
 	} 
       else 
 	{
-	  xz_xz_rc_direct(&s->rc, &s->lzma.rep0, limit - LZMA_ALIGN_BITS);
+	  xz_rc_direct(&s->rc, &s->lzma.rep0, limit - LZMA_ALIGN_BITS);
 	  s->lzma.rep0 <<= LZMA_ALIGN_BITS;
 	  xz_rc_bittree_reverse(&s->rc, s->lzma.dist_align, &s->lzma.rep0, LZMA_ALIGN_BITS);
 	}
@@ -5206,7 +5206,7 @@ xz_dec_stream_footer(struct xz_dec *s)
 
 /* Decode the Block Header and initialize the filter chain. */
 static enum xz_ret 
-xz_xz_dec_block_header(struct xz_dec *s)
+xz_dec_block_header(struct xz_dec *s)
 {
   enum xz_ret ret;
 
@@ -5375,7 +5375,7 @@ xz_dec_main(struct xz_dec *s, struct xz_buf *b)
 	  if (!xz_fill_temp(s, b))
 	    return XZ_OK;
 
-	  ret = xz_xz_dec_block_header(s);
+	  ret = xz_dec_block_header(s);
 	  if (ret != XZ_OK)
 	    return ret;
 
