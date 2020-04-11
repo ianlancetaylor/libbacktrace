@@ -476,6 +476,11 @@ AC_CHECK_LIB([z], [compress],
     [AC_DEFINE(HAVE_ZLIB, 1, [Define if -lz is available.])])
 AM_CONDITIONAL(HAVE_ZLIB, test "$ac_cv_lib_z_compress" = yes)
 
+AC_ARG_ENABLE(minidebuginfo,
+[AS_HELP_STRING([--enable-minidebuginfo],
+		[enable support for xz-compressed MiniDebugInfo])],
+		[AC_DEFINE(MINI_DEBUG_INFO, 1, [Define if MiniDebugInfo is supported.])])
+
 dnl Test whether the linker supports the --compress_debug_sections option.
 AC_CACHE_CHECK([whether --compress-debug-sections is supported],
 [libgo_cv_ld_compress],
