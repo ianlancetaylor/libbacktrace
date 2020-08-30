@@ -28,7 +28,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          ../configure
+          ../configure && rm config.log
         shell: bash
 
       - name: Make
@@ -40,5 +40,5 @@ jobs:
       - name: Check
         run: |
           cd build
-          make check
+          make check || { head -n 1000 *.log && false }
         shell: bash
