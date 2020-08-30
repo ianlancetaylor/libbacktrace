@@ -16,29 +16,33 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - {os: macOS-latest}
-          - {os: windows-latest}
-          - {os: ubuntu-18.04}
-          - {os: ubuntu-16.04}
+          - {os: macOS-latest, shell: bash}
+          - {os: windows-latest, shell: mingw64}
+          - {os: windows-latest, shell: mingw32}
+          - {os: ubuntu-18.04, shell: bash}
+          - {os: ubuntu-16.04, shell: bash}
 
     steps:
       - uses: actions/checkout@v2
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
 
       - name: Configure
         run: |
           mkdir build
           cd build
           ../configure && rm config.log
-        shell: bash
+        shell: $matrix.config.shell
 
       - name: Make
         run: |
           cd build
           make
-        shell: bash
+        shell: $matrix.config.shell
 
       - name: Check
         run: |
           cd build
           make check || { head -n 1000 *.log && false }
-        shell: bash
+        shell: $matrix.config.shell
