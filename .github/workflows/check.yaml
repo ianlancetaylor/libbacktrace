@@ -1,0 +1,46 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+name: example
+
+jobs:
+  R-CMD-check:
+    runs-on: ${{ matrix.config.os }}
+
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: macOS-latest}
+          - {os: windows-latest}
+          - {os: ubuntu-18.04}
+          - {os: ubuntu-16.04}
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          ../configure
+        shell: bash
+
+      - name: Make
+        run: |
+          cd build
+          make
+        shell: bash
+
+      - name: Check
+        run: |
+          cd build
+          make check
+        shell: bash
