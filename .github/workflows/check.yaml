@@ -33,7 +33,7 @@ jobs:
         if: runner.os == 'Windows'
         with:
           msystem: ${{ matrix.config.msystem }}
-          install: 'gcc'
+          install: 'gcc make'
 
       - name: Configure
         run: |
