@@ -82,6 +82,13 @@ unwind (struct _Unwind_Context *context, void *vdata)
       return _URC_NO_REASON;
     }
 
+  // Work around msys2 gcc buglet
+  // https://gcc.gnu.org/bugzilla/show_bug.cgi?id=96948
+  if (pc == 0)
+    {
+      pc = _Unwind_GetRegionStart (context);
+    }
+
   if (!ip_before_insn)
     --pc;
 
