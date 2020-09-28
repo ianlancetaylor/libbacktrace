@@ -3,3 +3,22 @@
 *.lo
 *.a
 *.la
+backtrace-supported.h
+install-debuginfo-for-buildid.sh
+
+# Autotools
+Makefile
+/autom4te.cache
+/config.h
+/config.status
+/depcomp
+/libtool
+/stamp-h1
+/test-suite.log
+.libs
+.deps
+.dirstamp
+*.log
+*.trs
+*.tar.gz
+

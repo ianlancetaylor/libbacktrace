@@ -532,7 +532,7 @@ check_PROGRAMS += $(BUILDTESTS)
 TESTS += $(BUILDTESTS)
 
 CLEANFILES = \
-	$(TESTS) *.debug elf_for_test.c edtest2_build.c gen_edtest2_build \
+	$(BUILDTESTS) *_minidebug *.debug elf_for_test.c edtest2_build.c gen_edtest2_build \
 	*.dsyms *.fsyms *.keepsyms *.dbg *.mdbg *.mdbg.xz *.strip
 
 clean-local:
