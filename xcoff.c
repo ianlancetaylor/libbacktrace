@@ -130,7 +130,7 @@ typedef struct {
 
 #define SSUBTYP_DWINFO	0x10000	/* DWARF info section.  */
 #define SSUBTYP_DWLINE	0x20000	/* DWARF line-number section.  */
-#define SSUBTYP_DWARNGE	0x50000	/* DWARF aranges section.  */
+#define SSUBTYP_DWARNGE	0x50000	/* DWARF arranges section.  */
 #define SSUBTYP_DWABREV	0x60000	/* DWARF abbreviation section.  */
 #define SSUBTYP_DWSTR	0x70000	/* DWARF strings section.  */
 
