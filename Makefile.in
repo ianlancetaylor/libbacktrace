@@ -827,6 +827,7 @@ CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
+DLLTOOL = @DLLTOOL@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 DWZ = @DWZ@
@@ -852,8 +853,10 @@ LIBTOOL = @LIBTOOL@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
+LT_SYS_LIBRARY_PATH = @LT_SYS_LIBRARY_PATH@
 MAINT = @MAINT@
 MAKEINFO = @MAKEINFO@
+MANIFEST_TOOL = @MANIFEST_TOOL@
 MKDIR_P = @MKDIR_P@
 NM = @NM@
 NMEDIT = @NMEDIT@
@@ -886,6 +889,7 @@ abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
+ac_ct_AR = @ac_ct_AR@
 ac_ct_CC = @ac_ct_CC@
 ac_ct_DUMPBIN = @ac_ct_DUMPBIN@
 am__leading_dot = @am__leading_dot@
@@ -925,6 +929,7 @@ pdfdir = @pdfdir@
 prefix = @prefix@
 program_transform_name = @program_transform_name@
 psdir = @psdir@
+runstatedir = @runstatedir@
 sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
@@ -1129,7 +1134,7 @@ libbacktrace_TEST_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) -g
 @HAVE_ELF_TRUE@xztest_alloc_LDADD = libbacktrace_alloc.la \
 @HAVE_ELF_TRUE@	$(am__append_28) $(CLOCK_GETTIME_LINK)
 CLEANFILES = \
-	$(TESTS) *.debug elf_for_test.c edtest2_build.c gen_edtest2_build \
+	$(BUILDTESTS) *_minidebug *.debug elf_for_test.c edtest2_build.c gen_edtest2_build \
 	*.dsyms *.fsyms *.keepsyms *.dbg *.mdbg *.mdbg.xz *.strip
 
 all: config.h
