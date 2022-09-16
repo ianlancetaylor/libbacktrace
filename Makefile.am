@@ -213,6 +213,7 @@ BUILDTESTS += test_unknown
 
 unittest_SOURCES = unittest.c testlib.c
 unittest_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+unittest_LDFLAGS = -static
 unittest_LDADD = libbacktrace.la
 
 BUILDTESTS += unittest
@@ -276,6 +277,7 @@ endif HAVE_ELF
 
 btest_SOURCES = btest.c testlib.c
 btest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -O
+btest_LDFLAGS = -static
 btest_LDADD = libbacktrace.la
 
 BUILDTESTS += btest
@@ -288,6 +290,7 @@ if HAVE_ELF
 
 btest_lto_SOURCES = btest.c testlib.c
 btest_lto_CFLAGS = $(libbacktrace_TEST_CFLAGS) -O -flto
+btest_lto_LDFLAGS = -static
 btest_lto_LDADD = libbacktrace.la
 
 BUILDTESTS += btest_lto
@@ -330,6 +333,7 @@ endif HAVE_DWZ
 
 stest_SOURCES = stest.c
 stest_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+stest_LDFLAGS = -static
 stest_LDADD = libbacktrace.la
 
 BUILDTESTS += stest
@@ -352,6 +356,7 @@ if HAVE_ELF
 
 ztest_SOURCES = ztest.c testlib.c
 ztest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -DSRCDIR=\"$(srcdir)\"
+ztest_LDFLAGS = -static
 ztest_LDADD = libbacktrace.la
 ztest_alloc_LDADD = libbacktrace_alloc.la
 
@@ -373,6 +378,7 @@ endif HAVE_ELF
 
 edtest_SOURCES = edtest.c edtest2_build.c testlib.c
 edtest_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+edtest_LDFLAGS = -static
 edtest_LDADD = libbacktrace.la
 
 BUILDTESTS += edtest
@@ -403,6 +409,7 @@ BUILDTESTS += ttest
 
 ttest_SOURCES = ttest.c testlib.c
 ttest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -pthread
+ttest_LDFLAGS = -static
 ttest_LDADD = libbacktrace.la
 
 if USE_DSYMUTIL
@@ -441,12 +448,12 @@ if HAVE_COMPRESSED_DEBUG
 
 ctestg_SOURCES = btest.c testlib.c
 ctestg_CFLAGS = $(libbacktrace_TEST_CFLAGS)
-ctestg_LDFLAGS = -Wl,--compress-debug-sections=zlib-gnu
+ctestg_LDFLAGS = -Wl,--compress-debug-sections=zlib-gnu -static
 ctestg_LDADD = libbacktrace.la
 
 ctesta_SOURCES = btest.c testlib.c
 ctesta_CFLAGS = $(libbacktrace_TEST_CFLAGS)
-ctesta_LDFLAGS = -Wl,--compress-debug-sections=zlib-gabi
+ctesta_LDFLAGS = -Wl,--compress-debug-sections=zlib-gabi -static
 ctesta_LDADD = libbacktrace.la
 
 BUILDTESTS += ctestg ctesta
@@ -469,6 +476,7 @@ if HAVE_DWARF5
 
 dwarf5_SOURCES = btest.c testlib.c
 dwarf5_CFLAGS = $(libbacktrace_TEST_CFLAGS) -gdwarf-5
+dwarf5_LDFLAGS = -static
 dwarf5_LDADD = libbacktrace.la
 
 BUILDTESTS += dwarf5
@@ -491,6 +499,7 @@ endif
 
 mtest_SOURCES = mtest.c testlib.c
 mtest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -O
+mtest_LDFLAGS = -static
 mtest_LDADD = libbacktrace.la
 
 BUILDTESTS += mtest
@@ -523,6 +532,7 @@ if HAVE_ELF
 
 xztest_SOURCES = xztest.c testlib.c
 xztest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -DSRCDIR=\"$(srcdir)\"
+xztest_LDFLAGS = -static
 xztest_LDADD = libbacktrace.la
 
 xztest_alloc_SOURCES = $(xztest_SOURCES)
