@@ -107,6 +107,8 @@ check_DATA =
 # Flags to use when compiling test programs.
 libbacktrace_TEST_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) -g
 
+libbacktrace_TEST_LDFLAGS = -no-install
+
 if USE_DSYMUTIL
 
 %.dSYM: %
@@ -171,48 +173,56 @@ xcoff_%.c: xcoff.c
 
 test_elf_32_SOURCES = test_format.c testlib.c
 test_elf_32_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_elf_32_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 test_elf_32_LDADD = libbacktrace_noformat.la elf_32.lo
 
 BUILDTESTS += test_elf_32
 
 test_elf_64_SOURCES = test_format.c testlib.c
 test_elf_64_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_elf_64_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 test_elf_64_LDADD = libbacktrace_noformat.la elf_64.lo
 
 BUILDTESTS += test_elf_64
 
 test_macho_SOURCES = test_format.c testlib.c
 test_macho_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_macho_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 test_macho_LDADD = libbacktrace_noformat.la macho.lo
 
 BUILDTESTS += test_macho
 
 test_xcoff_32_SOURCES = test_format.c testlib.c
 test_xcoff_32_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_xcoff_32_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 test_xcoff_32_LDADD = libbacktrace_noformat.la xcoff_32.lo
 
 BUILDTESTS += test_xcoff_32
 
 test_xcoff_64_SOURCES = test_format.c testlib.c
 test_xcoff_64_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_xcoff_64_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 test_xcoff_64_LDADD = libbacktrace_noformat.la xcoff_64.lo
 
 BUILDTESTS += test_xcoff_64
 
 test_pecoff_SOURCES = test_format.c testlib.c
 test_pecoff_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_pecoff_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 test_pecoff_LDADD = libbacktrace_noformat.la pecoff.lo
 
 BUILDTESTS += test_pecoff
 
 test_unknown_SOURCES = test_format.c testlib.c
 test_unknown_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+test_unknown_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 test_unknown_LDADD = libbacktrace_noformat.la unknown.lo
 
 BUILDTESTS += test_unknown
 
 unittest_SOURCES = unittest.c testlib.c
 unittest_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+unittest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 unittest_LDADD = libbacktrace.la
 
 BUILDTESTS += unittest
@@ -254,7 +264,7 @@ if HAVE_OBJCOPY_DEBUGLINK
 
 b2test_SOURCES = $(btest_SOURCES)
 b2test_CFLAGS = $(libbacktrace_TEST_CFLAGS)
-b2test_LDFLAGS = -Wl,--build-id
+b2test_LDFLAGS = -Wl,--build-id $(libbacktrace_TEST_LDFLAGS)
 b2test_LDADD = libbacktrace_elf_for_test.la
 
 check_PROGRAMS += b2test
@@ -264,7 +274,7 @@ if HAVE_DWZ
 
 b3test_SOURCES = $(btest_SOURCES)
 b3test_CFLAGS = $(libbacktrace_TEST_CFLAGS)
-b3test_LDFLAGS = -Wl,--build-id
+b3test_LDFLAGS = -Wl,--build-id $(libbacktrace_TEST_LDFLAGS)
 b3test_LDADD = libbacktrace_elf_for_test.la
 
 check_PROGRAMS += b3test
@@ -278,6 +288,7 @@ endif HAVE_ELF
 
 btest_SOURCES = btest.c testlib.c
 btest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -O
+btest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 btest_LDADD = libbacktrace.la
 
 BUILDTESTS += btest
@@ -332,6 +343,7 @@ endif HAVE_DWZ
 
 stest_SOURCES = stest.c
 stest_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+stest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 stest_LDADD = libbacktrace.la
 
 BUILDTESTS += stest
@@ -354,6 +366,7 @@ if HAVE_ELF
 
 ztest_SOURCES = ztest.c testlib.c
 ztest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -DSRCDIR=\"$(srcdir)\"
+ztest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 ztest_LDADD = libbacktrace.la
 ztest_alloc_LDADD = libbacktrace_alloc.la
 
@@ -373,6 +386,7 @@ BUILDTESTS += ztest_alloc
 
 zstdtest_SOURCES = zstdtest.c testlib.c
 zstdtest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -DSRCDIR=\"$(srcdir)\"
+zstdtest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 zstdtest_LDADD = libbacktrace.la
 zstdtest_alloc_LDADD = libbacktrace_alloc.la
 
@@ -394,6 +408,7 @@ endif HAVE_ELF
 
 edtest_SOURCES = edtest.c edtest2_build.c testlib.c
 edtest_CFLAGS = $(libbacktrace_TEST_CFLAGS)
+edtest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 edtest_LDADD = libbacktrace.la
 
 BUILDTESTS += edtest
@@ -424,6 +439,7 @@ BUILDTESTS += ttest
 
 ttest_SOURCES = ttest.c testlib.c
 ttest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -pthread
+ttest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 ttest_LDADD = libbacktrace.la
 
 if USE_DSYMUTIL
@@ -472,12 +488,12 @@ if HAVE_COMPRESSED_DEBUG
 
 ctestg_SOURCES = btest.c testlib.c
 ctestg_CFLAGS = $(libbacktrace_TEST_CFLAGS)
-ctestg_LDFLAGS = -Wl,--compress-debug-sections=zlib-gnu
+ctestg_LDFLAGS = -Wl,--compress-debug-sections=zlib-gnu $(libbacktrace_TEST_LDFLAGS)
 ctestg_LDADD = libbacktrace.la
 
 ctesta_SOURCES = btest.c testlib.c
 ctesta_CFLAGS = $(libbacktrace_TEST_CFLAGS)
-ctesta_LDFLAGS = -Wl,--compress-debug-sections=zlib-gabi
+ctesta_LDFLAGS = -Wl,--compress-debug-sections=zlib-gabi $(libbacktrace_TEST_LDFLAGS)
 ctesta_LDADD = libbacktrace.la
 
 BUILDTESTS += ctestg ctesta
@@ -486,7 +502,7 @@ if HAVE_COMPRESSED_DEBUG_ZSTD
 
 ctestzstd_SOURCES = btest.c testlib.c
 ctestzstd_CFLAGS = $(libbacktrace_TEST_CFLAGS)
-ctestzstd_LDFLAGS = -Wl,--compress-debug-sections=zstd
+ctestzstd_LDFLAGS = -Wl,--compress-debug-sections=zstd $(libbacktrace_TEST_LDFLAGS)
 ctestzstd_LDADD = libbacktrace.la
 
 BUILDTESTS += ctestzstd
@@ -533,6 +549,7 @@ endif
 
 mtest_SOURCES = mtest.c testlib.c
 mtest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -O
+mtest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 mtest_LDADD = libbacktrace.la
 
 BUILDTESTS += mtest
@@ -565,6 +582,7 @@ if HAVE_ELF
 
 xztest_SOURCES = xztest.c testlib.c
 xztest_CFLAGS = $(libbacktrace_TEST_CFLAGS) -DSRCDIR=\"$(srcdir)\"
+xztest_LDFLAGS = $(libbacktrace_TEST_LDFLAGS)
 xztest_LDADD = libbacktrace.la
 
 xztest_alloc_SOURCES = $(xztest_SOURCES)
