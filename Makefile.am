@@ -33,7 +33,8 @@ ACLOCAL_AMFLAGS = -I config
 
 AM_CPPFLAGS =
 
-AM_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) $(PIC_FLAG)
+AM_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) $(PIC_FLAG) \
+	-DSYSTEM_DEBUG_DIR=\"$(SEPARATE_DEBUG_DIR)\"
 
 include_HEADERS = backtrace.h backtrace-supported.h
 
@@ -132,7 +133,7 @@ libbacktrace_noformat_la_DEPENDENCIES = $(libbacktrace_noformat_la_LIBADD)
 if HAVE_ELF
 if HAVE_OBJCOPY_DEBUGLINK
 
-TEST_BUILD_ID_DIR=$(abs_builddir)/usr/lib/debug/.build-id/
+TEST_DEBUG_DIR=$(abs_builddir)/usr/lib/debug
 
 check_LTLIBRARIES += libbacktrace_elf_for_test.la
 
@@ -141,8 +142,8 @@ libbacktrace_elf_for_test_la_LIBADD = $(BACKTRACE_FILE) elf_for_test.lo \
 	$(VIEW_FILE) $(ALLOC_FILE)
 
 elf_for_test.c: elf.c
-	SEARCH='^#define SYSTEM_BUILD_ID_DIR.*$$'; \
-	REPLACE="#define SYSTEM_BUILD_ID_DIR \"$(TEST_BUILD_ID_DIR)\""; \
+	SEARCH='^#define BUILD_ID_DIR.*$$'; \
+	REPLACE='\0\n#undef SYSTEM_DEBUG_DIR\n#define SYSTEM_DEBUG_DIR "$(TEST_DEBUG_DIR)"'; \
 	$(SED) "s%$$SEARCH%$$REPLACE%" \
 		$< \
 		> $@.tmp
@@ -458,13 +459,13 @@ endif HAVE_OBJCOPY_DEBUGLINK
 
 %_buildid: %
 	./install-debuginfo-for-buildid.sh \
-	  "$(TEST_BUILD_ID_DIR)" \
+	  "$(TEST_DEBUG_DIR)/.build-id" \
 	  $<
 	$(OBJCOPY) --strip-debug $< $@
 
 %_buildidfull: %
 	./install-debuginfo-for-buildid.sh \
-	  "$(TEST_BUILD_ID_DIR)" \
+	  "$(TEST_DEBUG_DIR)/.build-id" \
 	  $<
 	$(OBJCOPY) --strip-all $< $@
 
