@@ -865,12 +865,12 @@ elf_readlink (struct backtrace_state *state, const char *filename,
    when the build ID is known is in /usr/lib/debug/.build-id.  */
 
 static int
-elf_open_debugfile_by_buildid (struct backtrace_state *state,
+elf_open_debugfile_by_buildid (const char * const prefix,
+                               struct backtrace_state *state,
 			       const char *buildid_data, size_t buildid_size,
 			       backtrace_error_callback error_callback,
 			       void *data)
 {
-  const char * const prefix = SYSTEM_DEBUG_DIR BUILD_ID_DIR;
   const size_t prefix_len = strlen (prefix);
   const char * const suffix = ".debug";
   const size_t suffix_len = strlen (suffix);
@@ -6947,27 +6947,42 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   if (buildid_data != NULL)
     {
       int d;
+      char debug_directories[strlen(SYSTEM_DEBUG_DIR) + 1];
+      char *debug_dir;
 
-      d = elf_open_debugfile_by_buildid (state, buildid_data, buildid_size,
-					 error_callback, data);
-      if (d >= 0)
-	{
-	  int ret;
+      strcpy(debug_directories, SYSTEM_DEBUG_DIR);
 
-	  elf_release_view (state, &buildid_view, error_callback, data);
-	  if (debuglink_view_valid)
-	    elf_release_view (state, &debuglink_view, error_callback, data);
-	  if (debugaltlink_view_valid)
-	    elf_release_view (state, &debugaltlink_view, error_callback, data);
-	  ret = elf_add (state, "", d, NULL, 0, base_address, opd,
-			 error_callback, data, fileline_fn, found_sym,
-			 found_dwarf, NULL, 0, 1, NULL, 0);
-	  if (ret < 0)
-	    backtrace_close (d, error_callback, data);
-	  else if (descriptor >= 0)
-	    backtrace_close (descriptor, error_callback, data);
-	  return ret;
-	}
+      debug_dir = strtok (debug_directories, ":");
+      while (debug_dir != NULL)
+      {
+        char prefix[strlen(debug_dir) + strlen(BUILD_ID_DIR) + 1];
+        strcpy(prefix, debug_dir);
+        strcat(prefix, BUILD_ID_DIR);
+
+        d = elf_open_debugfile_by_buildid (prefix, state, buildid_data, buildid_size,
+                                           error_callback, data);
+
+        if (d >= 0)
+          {
+            int ret;
+
+            elf_release_view (state, &buildid_view, error_callback, data);
+            if (debuglink_view_valid)
+              elf_release_view (state, &debuglink_view, error_callback, data);
+            if (debugaltlink_view_valid)
+              elf_release_view (state, &debugaltlink_view, error_callback, data);
+            ret = elf_add (state, "", d, NULL, 0, base_address, opd,
+                           error_callback, data, fileline_fn, found_sym,
+                           found_dwarf, NULL, 0, 1, NULL, 0);
+            if (ret < 0)
+              backtrace_close (d, error_callback, data);
+            else if (descriptor >= 0)
+              backtrace_close (descriptor, error_callback, data);
+            return ret;
+          }
+
+        debug_dir = strtok (NULL, ":");
+      }
     }
 
   if (buildid_view_valid)
