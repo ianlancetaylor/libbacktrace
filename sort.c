@@ -62,47 +62,26 @@ backtrace_qsort (void *basearg, size_t count, size_t size,
 		 int (*compar) (const void *, const void *))
 {
   char *base = (char *) basearg;
-  size_t i;
-  size_t mid;
+  char *cur;
+  size_t i, d, dist;
 
- tail_recurse:
   if (count < 2)
     return;
 
-  /* The symbol table and DWARF tables, which is all we use this
-     routine for, tend to be roughly sorted.  Pick the middle element
-     in the array as our pivot point, so that we are more likely to
-     cut the array in half for each recursion step.  */
-  swap (base, base + (count / 2) * size, size);
-
-  mid = 0;
-  for (i = 1; i < count; i++)
+  /* Shell sort doesn't require recursion. It is comparable to naive
+     qsort on small arrays and just twice slower on million items. */
+  dist = count;
+  do
     {
-      if ((*compar) (base, base + i * size) > 0)
-	{
-	  ++mid;
-	  if (i != mid)
-	    swap (base + mid * size, base + i * size, size);
-	}
+      dist = (dist / 8 * 3) | 1;
+      d = dist * size;
+      for (i = dist; i < count; i++)
+	for (cur = base + i*size - d; cur >= base; cur -= d)
+	  {
+	    if ((*compar) (cur, cur + d) <= 0)
+	      break;
+	    swap (cur, cur + d, size);
+	  }
     }
-
-  if (mid > 0)
-    swap (base, base + mid * size, size);
-
-  /* Recurse with the smaller array, loop with the larger one.  That
-     ensures that our maximum stack depth is log count.  */
-  if (2 * mid < count)
-    {
-      backtrace_qsort (base, mid, size, compar);
-      base += (mid + 1) * size;
-      count -= mid + 1;
-      goto tail_recurse;
-    }
-  else
-    {
-      backtrace_qsort (base + (mid + 1) * size, count - (mid + 1),
-		       size, compar);
-      count = mid;
-      goto tail_recurse;
-    }
+  while (dist != 1);
 }
