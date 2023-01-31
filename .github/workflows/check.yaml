@@ -25,8 +25,9 @@ jobs:
           - {os: macOS-latest, shell: bash, allow_fail: true }
           - {os: windows-latest, shell: 'msys2 {0}', msystem: MINGW64, allow_fail: true }
           - {os: windows-latest, shell: 'msys2 {0}', msystem: MINGW32, allow_fail: true }
+          - {os: ubuntu-22.04, shell: bash, allow_fail: false }
+          - {os: ubuntu-20.04, shell: bash, allow_fail: false }
           - {os: ubuntu-18.04, shell: bash, allow_fail: false }
-          - {os: ubuntu-16.04, shell: bash, allow_fail: false }
 
     steps:
       - uses: actions/checkout@v2
