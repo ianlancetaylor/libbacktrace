@@ -644,7 +644,7 @@ coff_add (struct backtrace_state *state, int descriptor,
       magic_ok = memcmp (magic, "PE\0", 4) == 0;
       fhdr_off += 4;
 
-      memcpy (&fhdr, fhdr_view.data + 4, sizeof fhdr);
+      memcpy (&fhdr, magic + 4, sizeof fhdr);
     }
   else
     {
@@ -678,7 +678,7 @@ coff_add (struct backtrace_state *state, int descriptor,
   sects_view_valid = 1;
   opt_hdr = (const b_coff_optional_header *) sects_view.data;
   sects = (const b_coff_section_header *)
-    (sects_view.data + fhdr.size_of_optional_header);
+    (void *)((const char *)sects_view.data + fhdr.size_of_optional_header);
 
   if (fhdr.size_of_optional_header > sizeof (*opt_hdr))
     {
@@ -718,7 +718,7 @@ coff_add (struct backtrace_state *state, int descriptor,
 	goto fail;
       syms_view_valid = 1;
 
-      str_size = coff_read4 (syms_view.data + syms_size);
+      str_size = coff_read4 ((const unsigned char *)syms_view.data + syms_size);
 
       str_off = syms_off + syms_size;
 
