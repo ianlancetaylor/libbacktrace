@@ -92,6 +92,16 @@ AM_PROG_LIBTOOL
 
 AC_SYS_LARGEFILE
 
+is_vxworks=no
+case "${host}" in
+  *-*-vxworks*) is_vxworks=yes ;;
+esac
+AM_CONDITIONAL(LIBBACKTRACE_IS_VXWORKS, test $is_vxworks = yes)
+
+if test "x$is_vxworks" = "xyes"; then
+	CFLAGS="$CFLAGS -mrtp"
+fi
+
 backtrace_supported=yes
 
 if test -n "${with_target_subdir}"; then
@@ -388,7 +398,7 @@ if test "$have_fcntl" = "yes"; then
 	    [Define to 1 if you have the fcntl function])
 fi
 
-AC_CHECK_DECLS([strnlen, getpagesize])
+AC_CHECK_DECLS([strnlen, getpagesize, sysconf])
 AC_CHECK_FUNCS(lstat readlink)
 
 # Check for getexecname function.

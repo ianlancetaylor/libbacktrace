@@ -32,8 +32,14 @@
 ACLOCAL_AMFLAGS = -I config
 
 AM_CPPFLAGS =
+if LIBBACKTRACE_IS_VXWORKS
+AM_CPPFLAGS += -mrtp
+endif
 
 AM_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) $(PIC_FLAG)
+if LIBBACKTRACE_IS_VXWORKS
+AM_CFLAGS += -mrtp
+endif
 
 include_HEADERS = backtrace.h backtrace-supported.h
 
@@ -106,6 +112,9 @@ check_DATA =
 
 # Flags to use when compiling test programs.
 libbacktrace_TEST_CFLAGS = $(EXTRA_FLAGS) $(WARN_FLAGS) -g
+if LIBBACKTRACE_IS_VXWORKS
+libbacktrace_TEST_CFLAGS += -mrtp
+endif
 
 if USE_DSYMUTIL
 
