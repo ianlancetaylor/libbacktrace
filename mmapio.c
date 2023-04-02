@@ -40,8 +40,12 @@ POSSIBILITY OF SUCH DAMAGE.  */
 #include "backtrace.h"
 #include "internal.h"
 
-#ifndef HAVE_DECL_GETPAGESIZE
+#if !defined(HAVE_DECL_GETPAGESIZE) || !HAVE_DECL_GETPAGESIZE
+#ifdef __VXWORKS__
+#define getpagesize() sysconf(_SC_PAGESIZE)
+#else
 extern int getpagesize (void);
+#endif /* __VXWORKS__ */
 #endif
 
 #ifndef MAP_FAILED
