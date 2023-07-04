@@ -32,9 +32,13 @@ POSSIBILITY OF SUCH DAMAGE.  */
 
 #include "config.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+
+#include <windows.h>
+#include <subauth.h>
 
 #include "backtrace.h"
 #include "internal.h"
@@ -179,6 +183,111 @@ struct coff_syminfo_data
   /* The number of symbols.  */
   size_t count;
 };
+
+/* MS Windows PEB structures */
+typedef struct _PEB_LDR_DATA {
+  BYTE Reserved1[8];
+  PVOID Reserved2[3];
+  LIST_ENTRY InMemoryOrderModuleList;
+} PEB_LDR_DATA, *PPEB_LDR_DATA;
+
+typedef struct _RTL_USER_PROCESS_PARAMETERS {
+  UCHAR Reserved1[16];
+  PVOID Reserved2[10];
+  UNICODE_STRING ImagePathName;
+  UNICODE_STRING CommandLine;
+} RTL_USER_PROCESS_PARAMETERS, *PRTL_USER_PROCESS_PARAMETERS;
+
+typedef struct _LDR_DATA_TABLE_ENTRY {
+  LIST_ENTRY InLoadOrderLinks;
+  LIST_ENTRY InMemoryOrderModuleList;
+  LIST_ENTRY InInitializationOrderModuleList;
+  PVOID DllBase;
+  PVOID EntryPoint;
+  ULONG SizeOfImage;
+  UNICODE_STRING FullDllName;
+  UNICODE_STRING BaseDllName;
+  ULONG Flags;
+  USHORT LoadCount;
+  USHORT TlsIndex;
+  union {
+    LIST_ENTRY HashLinks;
+    struct {
+      PVOID SectionPointer;
+      ULONG CheckSum;
+    };
+  };
+  union {
+    ULONG TimeDateStamp;
+    PVOID LoadedImports;
+  };
+  PVOID EntryPointActivationContext;
+  PVOID PatchInformation;
+} LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
+
+struct _PEB32 {
+  BYTE Reserved1[2];
+  BYTE BeingDebugged;
+  BYTE Reserved2[1];
+  PVOID Reserved3[2];
+  PPEB_LDR_DATA Ldr;
+  PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
+  BYTE Reserved4[104];
+  PVOID Reserved5[52];
+  PVOID PostProcessInitRoutine;
+  BYTE Reserved6[128];
+  PVOID Reserved7[1];
+  ULONG SessionId;
+};
+
+struct _PEB64 {
+    BYTE Reserved1[2];
+    BYTE BeingDebugged;
+    BYTE Reserved2[21];
+    PPEB_LDR_DATA Ldr;
+    PRTL_USER_PROCESS_PARAMETERS ProcessParameters;
+    BYTE Reserved3[520];
+    PVOID PostProcessInitRoutine;
+    BYTE Reserved4[136];
+    ULONG SessionId;
+};
+
+#ifdef _WIN64
+typedef struct _PEB64 PEB, *PPEB;
+#else
+typedef struct _PEB32 PEB, *PPEB;
+#endif
+
+typedef struct _PROCESS_BASIC_INFORMATION {
+  PVOID ExitStatus;
+  PPEB PebBaseAddress;
+  PVOID Reserved2[2];
+  ULONG_PTR UniqueProcessId;
+  PVOID Reserved3;
+} PROCESS_BASIC_INFORMATION, *PPROCESS_BASIC_INFORMATION;
+
+typedef enum _PROCESSINFOCLASS {
+  ProcessBasicInformation
+  // We don't need the others
+} PROCESSINFOCLASS;
+
+// MODULE_ENTRY contains basic information about a module
+typedef struct _MODULE_ENTRY {
+  UNICODE_STRING FullName;
+  PVOID BaseAddress;
+} MODULE_ENTRY, *PMODULE_ENTRY;
+
+// MODULE_INFORMATION_TABLE contains basic information about all the modules of
+// a given process
+typedef struct _MODULE_INFORMATION_TABLE {
+  ULONG ModuleCount;     // Modules count for the above pointer
+  PMODULE_ENTRY Modules; // Pointer to 0...* modules
+} MODULE_INFORMATION_TABLE, *PMODULE_INFORMATION_TABLE;
+
+typedef NTSTATUS(NTAPI *pfnNtQueryInformationProcess)(
+    HANDLE ProcessHandle, PROCESSINFOCLASS ProcessInformationClass,
+    OUT PVOID ProcessInformation, ULONG ProcessInformationLength,
+    OUT PULONG ReturnLength OPTIONAL);
 
 /* A dummy callback function used when we can't find any debug info.  */
 
@@ -579,7 +688,8 @@ coff_syminfo (struct backtrace_state *state, uintptr_t addr,
 
 static int
 coff_add (struct backtrace_state *state, int descriptor,
-	  backtrace_error_callback error_callback, void *data,
+                    uintptr_t base_address,
+                    backtrace_error_callback error_callback, void *data,
 	  fileline *fileline_fn, int *found_sym, int *found_dwarf)
 {
   struct backtrace_view fhdr_view;
@@ -786,7 +896,7 @@ coff_add (struct backtrace_state *state, int descriptor,
       if (sdata == NULL)
 	goto fail;
 
-      if (!coff_initialize_syminfo (state, image_base, is_64,
+      if (!coff_initialize_syminfo (state, base_address, is_64,
 				    sects, sects_num,
 				    syms_view.data, syms_size,
 				    str_view.data, str_size,
@@ -856,7 +966,7 @@ coff_add (struct backtrace_state *state, int descriptor,
 				  + (sections[i].offset - min_offset));
     }
 
-  if (!backtrace_dwarf_add (state, /* base_address */ 0, &dwarf_sections,
+  if (!backtrace_dwarf_add (state, base_address - image_base, &dwarf_sections,
 			    0, /* FIXME: is_bigendian */
 			    NULL, /* altlink */
 			    error_callback, data, fileline_fn,
@@ -881,8 +991,157 @@ coff_add (struct backtrace_state *state, int descriptor,
   return 0;
 }
 
-/* Initialize the backtrace data we need from an ELF executable.  At
-   the ELF level, all we need to do is find the debug info
+static PPROCESS_BASIC_INFORMATION
+pe_query_process_info(struct backtrace_state *state, HANDLE process,
+                        PROCESSINFOCLASS process_information_class,
+                        DWORD process_information_length,
+                        backtrace_error_callback error_callback, void *data) {
+  PPROCESS_BASIC_INFORMATION pprocess_information = NULL;
+  pfnNtQueryInformationProcess g_nt_query_information_process;
+  ULONG ReturnLength = 0;
+  NTSTATUS Status;
+  HMODULE hNtDll;
+
+  if (!(hNtDll = LoadLibrary("ntdll.dll"))) {
+    error_callback(data, "Cannot load ntdll.dll.",0);
+    return NULL;
+  }
+
+  if (!(g_nt_query_information_process = (pfnNtQueryInformationProcess)
+            GetProcAddress(hNtDll, "NtQueryInformationProcess"))) {
+    error_callback(data, "Cannot load NtQueryInformationProcess.",0);
+    return NULL;
+  }
+
+  // Allocate the memory for the requested structure
+  if ((pprocess_information = (PPROCESS_BASIC_INFORMATION)(backtrace_alloc(state,process_information_length, error_callback, data))) == NULL) {
+    error_callback(data, "ExAllocatePoolWithTag failed.", 0);
+    return NULL;
+  }
+
+  // Fill the requested structure
+  if (!NT_SUCCESS(Status = g_nt_query_information_process(
+                      process, process_information_class, pprocess_information,
+                      process_information_length, &ReturnLength))) {
+                        error_callback(data, "NtQueryInformationProcess should return NT_SUCCESS.\n", Status);
+    backtrace_free(state, pprocess_information, process_information_length, error_callback, data);
+    return NULL;
+  }
+
+  // Check the requested structure size with the one returned by
+  // NtQueryInformationProcess
+  if (ReturnLength != process_information_length) {
+    return NULL;
+  }
+
+  return pprocess_information;
+}
+
+static PPEB pe_get_current_peb_process(struct backtrace_state *state, backtrace_error_callback error_callback, void *data) {
+  PPROCESS_BASIC_INFORMATION pProcessInformation = NULL;
+  DWORD ProcessInformationLength = sizeof(PROCESS_BASIC_INFORMATION);
+  HANDLE Process = GetCurrentProcess();
+  PPEB pPeb = NULL;
+
+  // ProcessBasicInformation returns information about the PebBaseAddress
+  if ((pProcessInformation =
+           (PPROCESS_BASIC_INFORMATION)(pe_query_process_info(state, Process, ProcessBasicInformation,
+                                   ProcessInformationLength, error_callback, data))) == NULL) {
+    error_callback(data, "pe_query_process_info failed", 0);
+    return NULL;
+  }
+
+  // Check the correctness of the value returned
+  if (pProcessInformation->PebBaseAddress == NULL) {
+    error_callback(data, "PEB address cannot be found.", 0);
+    backtrace_free(state, pProcessInformation, sizeof(PROCESS_BASIC_INFORMATION),
+                   error_callback, data);
+    return NULL;
+  }
+
+  pPeb = pProcessInformation->PebBaseAddress;
+
+  backtrace_free(state, pProcessInformation, sizeof(PROCESS_BASIC_INFORMATION),
+                   error_callback, data);
+
+  return pPeb;
+}
+
+static MODULE_INFORMATION_TABLE pe_create_module_info(struct backtrace_state *state, PPEB ppeb, backtrace_error_callback error_callback, void *data) {
+  MODULE_INFORMATION_TABLE module_information_table;
+  ULONG count = 0;
+  ULONG cur_count = 0;
+  PLIST_ENTRY pentry = NULL;
+  PLIST_ENTRY phead_entry = NULL;
+  PPEB_LDR_DATA pldr_data = NULL;
+  PMODULE_ENTRY cur_module = NULL;
+  PLDR_DATA_TABLE_ENTRY pldr_entry = NULL;
+
+  memset(&module_information_table, 0, sizeof(MODULE_INFORMATION_TABLE));
+
+  pldr_data = ppeb->Ldr;
+  phead_entry = &pldr_data->InMemoryOrderModuleList;
+
+  // Count user modules : iterate through the entire list
+  pentry = phead_entry->Flink;
+  while (pentry != phead_entry) {
+    count++;
+    pentry = pentry->Flink;
+  }
+
+  // Allocate the correct amount of memory depending of the modules count
+  if ((module_information_table.Modules =
+           (PMODULE_ENTRY)(backtrace_alloc(state, count * sizeof(MODULE_ENTRY), error_callback, data))) == NULL) {
+    return module_information_table;
+  }
+
+  // Fill the basic information of MODULE_INFORMATION_TABLE
+  module_information_table.ModuleCount = count;
+
+  // Fill all the modules information in the table
+  pentry = phead_entry->Flink;
+  while (pentry != phead_entry) {
+    // Retrieve the current MODULE_ENTRY
+    cur_module = &module_information_table.Modules[cur_count++];
+
+    // Retrieve the current LDR_DATA_TABLE_ENTRY
+    pldr_entry = CONTAINING_RECORD(pentry, LDR_DATA_TABLE_ENTRY,
+                                  InMemoryOrderModuleList);
+
+    RtlCopyMemory(&cur_module->FullName, &pldr_entry->FullDllName,
+                  sizeof(cur_module->FullName));
+    RtlCopyMemory(&cur_module->BaseAddress, &pldr_entry->DllBase,
+                  sizeof(cur_module->BaseAddress));
+
+    // Iterate to the next entry
+    pentry = pentry->Flink;
+  }
+
+  return module_information_table;
+}
+
+static MODULE_INFORMATION_TABLE pe_query_dl(struct backtrace_state *state, backtrace_error_callback error_callback, void *data) {
+  PPEB pPeb = NULL;
+  MODULE_INFORMATION_TABLE pmodule_information_table;
+  memset(&pmodule_information_table, 0, sizeof(MODULE_INFORMATION_TABLE));
+
+  // Read the PEB from the current process
+  if ((pPeb = pe_get_current_peb_process(state, error_callback, data)) == NULL) {
+    error_callback(data, "pe_get_current_peb_process failed.", 0);
+    return pmodule_information_table;
+  }
+
+  // Convert the PEB into a MODULE_INFORMATION_TABLE
+  if ((pmodule_information_table = pe_create_module_info(state, pPeb, error_callback, data)).ModuleCount == 0) {
+    error_callback(data, "CreateModuleInformation failed.", 0);
+    return pmodule_information_table;
+  }
+
+  return pmodule_information_table;
+}
+
+/* Initialize the backtrace data we need from an PE executable.  At
+   the PE level, all we need to do is find the debug info
    sections.  */
 
 int
@@ -894,10 +1153,39 @@ backtrace_initialize (struct backtrace_state *state,
   int ret;
   int found_sym;
   int found_dwarf;
-  fileline coff_fileline_fn;
+  fileline coff_fileline_fn = coff_nodebug;
 
-  ret = coff_add (state, descriptor, error_callback, data,
-		  &coff_fileline_fn, &found_sym, &found_dwarf);
+  MODULE_INFORMATION_TABLE moduleTable = pe_query_dl(state, error_callback, data);
+
+  if (moduleTable.ModuleCount == 0) {
+    error_callback(data, "pe_query_dl failed", 0);
+    return 0;
+  }
+
+  ret = coff_add(state, descriptor, (uintptr_t)(moduleTable.Modules[0].BaseAddress), error_callback, data, &coff_fileline_fn,
+             &found_sym, &found_dwarf);
+  size_t j;
+  int found_sym_i;
+  int found_dwarf_i;
+  fileline coff_fileline_fn_i = coff_fileline_fn;
+  for (j = 1; j != moduleTable.ModuleCount; ++j) {
+    MODULE_ENTRY *module_entry = &moduleTable.Modules[j];
+    FILE* f;
+    errno_t e = _wfopen_s(&f, module_entry->FullName.Buffer, L"rb");
+    int descriptor_i = _fileno(f);
+    if (descriptor_i < 0){
+      continue;
+    }
+
+    int ret_i = coff_add(state, descriptor_i, (uintptr_t)(module_entry->BaseAddress), error_callback, data, &coff_fileline_fn,
+             &found_sym_i, &found_dwarf_i);
+    ret |= ret_i;
+    found_sym |= found_sym_i;
+    found_dwarf |= found_dwarf_i;
+    if(coff_fileline_fn_i != coff_nodebug)
+      coff_fileline_fn = coff_fileline_fn_i;
+  }
+
   if (!ret)
     return 0;
 
