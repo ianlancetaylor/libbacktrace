@@ -1083,10 +1083,8 @@ static MODULE_INFORMATION_TABLE pe_create_module_info(struct backtrace_state *st
   phead_entry = &pldr_data->InMemoryOrderModuleList;
 
   // Count user modules : iterate through the entire list
-  pentry = phead_entry->Flink;
-  while (pentry != phead_entry) {
+  for(pentry = phead_entry->Flink; pentry != phead_entry; pentry = pentry->Flink) {
     count++;
-    pentry = pentry->Flink;
   }
 
   // Allocate the correct amount of memory depending of the modules count
@@ -1099,8 +1097,8 @@ static MODULE_INFORMATION_TABLE pe_create_module_info(struct backtrace_state *st
   module_information_table.ModuleCount = count;
 
   // Fill all the modules information in the table
-  pentry = phead_entry->Flink;
-  while (pentry != phead_entry) {
+  
+  for (pentry = phead_entry->Flink; pentry != phead_entry; pentry = pentry->Flink) {
     // Retrieve the current MODULE_ENTRY
     cur_module = &module_information_table.Modules[cur_count++];
 
@@ -1109,12 +1107,9 @@ static MODULE_INFORMATION_TABLE pe_create_module_info(struct backtrace_state *st
                                   InMemoryOrderModuleList);
 
     RtlCopyMemory(&cur_module->FullName, &pldr_entry->FullDllName,
-                  sizeof(cur_module->FullName));
+                  sizeof(cur_module->FullName)); // Copy of view, not the data
     RtlCopyMemory(&cur_module->BaseAddress, &pldr_entry->DllBase,
                   sizeof(cur_module->BaseAddress));
-
-    // Iterate to the next entry
-    pentry = pentry->Flink;
   }
 
   return module_information_table;
@@ -1185,6 +1180,7 @@ backtrace_initialize (struct backtrace_state *state,
     if(coff_fileline_fn_i != coff_nodebug)
       coff_fileline_fn = coff_fileline_fn_i;
   }
+  backtrace_free(state, moduleTable.Modules, moduleTable.ModuleCount * sizeof(MODULE_ENTRY) , error_callback, data);
 
   if (!ret)
     return 0;
