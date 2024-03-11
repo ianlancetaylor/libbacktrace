@@ -492,8 +492,6 @@ macho_defined_symbol (uint8_t type)
 {
   if ((type & MACH_O_N_STAB) != 0)
     return 0;
-  if ((type & MACH_O_N_EXT) != 0)
-    return 0;
   switch (type & MACH_O_N_TYPE)
     {
     case MACH_O_N_ABS:
