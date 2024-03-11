@@ -47,8 +47,8 @@ POSSIBILITY OF SUCH DAMAGE.  */
 struct test
 {
   size_t count;
-  int input[MAX];
-  int output[MAX];
+  uintptr_t input[MAX];
+  uintptr_t output[MAX];
 };
 
 static struct test tests[] =
@@ -103,10 +103,10 @@ static struct test tests[] =
 static int
 compare (const void *a, const void *b)
 {
-  const int *ai = (const int *) a;
-  const int *bi = (const int *) b;
+  const uintptr_t *ai = (const uintptr_t *) a;
+  const uintptr_t *bi = (const uintptr_t *) b;
 
-  return *ai - *bi;
+  return *ai < *bi ? -1 : *ai > *bi;
 }
 
 int
@@ -114,20 +114,20 @@ main (int argc ATTRIBUTE_UNUSED, char **argv ATTRIBUTE_UNUSED)
 {
   int failures;
   size_t i;
-  int a[MAX];
+  uintptr_t a[MAX];
 
   failures = 0;
   for (i = 0; i < sizeof tests / sizeof tests[0]; i++)
     {
-      memcpy (a, tests[i].input, tests[i].count * sizeof (int));
-      backtrace_qsort (a, tests[i].count, sizeof (int), compare);
-      if (memcmp (a, tests[i].output, tests[i].count * sizeof (int)) != 0)
+      memcpy (a, tests[i].input, tests[i].count * sizeof (uintptr_t));
+      backtrace_qsort (a, tests[i].count, sizeof (uintptr_t), compare);
+      if (memcmp (a, tests[i].output, tests[i].count * sizeof (uintptr_t)) != 0)
 	{
 	  size_t j;
 
 	  fprintf (stderr, "test %d failed:", (int) i);
 	  for (j = 0; j < tests[i].count; j++)
-	    fprintf (stderr, " %d", a[j]);
+	    fprintf (stderr, " %d", (int)a[j]);
 	  fprintf (stderr, "\n");
 	  ++failures;
 	}
