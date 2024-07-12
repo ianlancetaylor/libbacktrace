@@ -682,6 +682,8 @@ PIC_FLAG
 WARN_FLAGS
 EXTRA_FLAGS
 BACKTRACE_FILE
+ENABLE_DARWIN_AT_RPATH_FALSE
+ENABLE_DARWIN_AT_RPATH_TRUE
 OTOOL64
 OTOOL
 LIPO
@@ -11393,7 +11395,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 11396 "configure"
+#line 11398 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -11499,7 +11501,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 11502 "configure"
+#line 11504 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -11736,6 +11738,15 @@ CC="$lt_save_CC"
 # Only expand once:
 
 
+
+
+ if test x$enable_darwin_at_rpath = xyes; then
+  ENABLE_DARWIN_AT_RPATH_TRUE=
+  ENABLE_DARWIN_AT_RPATH_FALSE='#'
+else
+  ENABLE_DARWIN_AT_RPATH_TRUE='#'
+  ENABLE_DARWIN_AT_RPATH_FALSE=
+fi
 
 
 # Check whether --enable-largefile was given.
@@ -13660,6 +13671,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${HAVE_DWZ_TRUE}" && test -z "${HAVE_DWZ_FALSE}"; then
   as_fn_error $? "conditional \"HAVE_DWZ\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${ENABLE_DARWIN_AT_RPATH_TRUE}" && test -z "${ENABLE_DARWIN_AT_RPATH_FALSE}"; then
+  as_fn_error $? "conditional \"ENABLE_DARWIN_AT_RPATH\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${HAVE_ELF_TRUE}" && test -z "${HAVE_ELF_FALSE}"; then
