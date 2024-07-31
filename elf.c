@@ -925,6 +925,7 @@ static int
 elf_try_debugfile (struct backtrace_state *state, const char *prefix,
 		   size_t prefix_len, const char *prefix2, size_t prefix2_len,
 		   const char *debuglink_name,
+		   const char *ref_filename,
 		   backtrace_error_callback error_callback, void *data)
 {
   size_t debuglink_len;
@@ -943,6 +944,9 @@ elf_try_debugfile (struct backtrace_state *state, const char *prefix,
   memcpy (try + prefix_len, prefix2, prefix2_len);
   memcpy (try + prefix_len + prefix2_len, debuglink_name, debuglink_len);
   try[prefix_len + prefix2_len + debuglink_len] = '\0';
+
+  if(ref_filename && *ref_filename && !strcmp(try, ref_filename))
+      return -1; // loop detected
 
   ret = backtrace_open (try, error_callback, data, &does_not_exist);
 
@@ -1034,7 +1038,8 @@ elf_find_debugfile_by_debuglink (struct backtrace_state *state,
     }
 
   ddescriptor = elf_try_debugfile (state, prefix, prefix_len, "", 0,
-				   debuglink_name, error_callback, data);
+				   debuglink_name, filename,
+                                   error_callback, data);
   if (ddescriptor >= 0)
     {
       ret = ddescriptor;
@@ -1045,7 +1050,7 @@ elf_find_debugfile_by_debuglink (struct backtrace_state *state,
 
   ddescriptor = elf_try_debugfile (state, prefix, prefix_len, ".debug/",
 				   strlen (".debug/"), debuglink_name,
-				   error_callback, data);
+                                   filename, error_callback, data);
   if (ddescriptor >= 0)
     {
       ret = ddescriptor;
@@ -1057,7 +1062,7 @@ elf_find_debugfile_by_debuglink (struct backtrace_state *state,
   ddescriptor = elf_try_debugfile (state, "/usr/lib/debug/",
 				   strlen ("/usr/lib/debug/"), prefix,
 				   prefix_len, debuglink_name,
-				   error_callback, data);
+				   filename, error_callback, data);
   if (ddescriptor >= 0)
     ret = ddescriptor;
 
