@@ -14,11 +14,11 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/.gitignore "*")
 
 
 # options
+option(BUILD_SHARED "build dynamically linked version")
 option(ENABLE_DARWIN_AT_RPATH "")
 option(DISABLE_WERROR "disable building with -Werror")
 option(ENABLE_MULTILIB "enable multilib option")
 set(RANDOM_SEED_STRING "libbacktrace" CACHE STRING "custom random seed")
-set(BACKTRACE_SRC_RELATIVE "" CACHE STRING "position of libbacktrace source directory")
 
 
 # global variables
@@ -403,20 +403,19 @@ add_backtrace_part(iomem_instrumented SRCS read.c instrumented_alloc.c)
 
 
 # Finally, hello, libbacktrace!
-add_library(backtrace SHARED)
-target_link_libraries(backtrace PRIVATE
-    $<BUILD_INTERFACE:common_pic fmt_${PROGRAM_ARCH}_pic iomem_sys_pic>
-)
-target_include_directories(backtrace PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR} ${GENERATED_SOURCES}>  
-    $<INSTALL_INTERFACE:include>
-)
+if (BUILD_SHARED)
+    add_library(backtrace SHARED)
+    target_link_libraries(backtrace PRIVATE
+        $<BUILD_INTERFACE:common_pic fmt_${PROGRAM_ARCH}_pic iomem_sys_pic>
+    )
+else()
+    add_library(backtrace STATIC)
+    target_link_libraries(backtrace PRIVATE
+        $<BUILD_INTERFACE:common fmt_${PROGRAM_ARCH} iomem_sys>
+    )
+endif()
 
-add_library(backtrace_a STATIC)
-target_link_libraries(backtrace_a PRIVATE
-    $<BUILD_INTERFACE:common fmt_${PROGRAM_ARCH} iomem_sys>
-)
-target_include_directories(backtrace_a PUBLIC
+target_include_directories(backtrace PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR} ${GENERATED_SOURCES}>  
     $<INSTALL_INTERFACE:include>
 )
@@ -438,7 +437,7 @@ install(
     DESTINATION include
 )
 install(
-    TARGETS backtrace backtrace_a
+    TARGETS backtrace
     DESTINATION lib
     EXPORT libbacktrace-targets
 )
