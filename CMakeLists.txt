@@ -492,7 +492,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${SCRIPT_WRAPPER} $<TARGET_FILE_DIR:${NAME}>/${NAME}.sh
         )
-        add_test(NAME ${NAME} COMMAND $<TARGET_FILE_DIR:${NAME}>/${NAME}.sh)
+        add_test(NAME ${NAME} COMMAND sh $<TARGET_FILE_DIR:${NAME}>/${NAME}.sh)
     endfunction()
 
     function(add_debug_info_test_of TARGET_NAME)
