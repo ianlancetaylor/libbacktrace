@@ -56,6 +56,9 @@ foreach(AUTODEF ${AUTODEFS})
     list(APPEND CMAKE_REQUIRED_DEFINITIONS -D${AUTODEF}=1)
 endforeach()
 
+# let MSVC shut up safety nonsense
+set(_CRT_SECURE_NO_WARNINGS 1)
+append_bool_def(BACKTRACE_DEFINITIONS _CRT_SECURE_NO_WARNINGS)
 
 # check for libraries
 check_library_exists("z" "compress" "" HAVE_ZLIB)
@@ -86,10 +89,18 @@ check_compiler_flag(C "-funwind-tables" HAVE_F_UNWIND_TABLES)
 check_compiler_flag(C "-frandom-seed=${RANDOM_SEED_STRING}" HAVE_F_RANDOM_SEED)
 check_compiler_flag(C "-pthread" HAVE_PTHREAD)
 check_compiler_flag(C "-gdwarf-5" HAVE_DWARF5)
-check_linker_flag(C "-Wl,--build-id" HAVE_BUILDID)
-check_linker_flag(C "-Wl,--compress-debug-sections=zlib-gnu" HAVE_COMPRESSED_DEBUG_ZLIB_GNU)
-check_linker_flag(C "-Wl,--compress-debug-sections=zlib-gabi" HAVE_COMPRESSED_DEBUG_ZLIB_GABI)
-check_linker_flag(C "-Wl,--compress-debug-sections=zst" HAVE_COMPRESSED_DEBUG_ZSTD)
+if (MSVC)
+    # somehow linker check will always pass, skip that for MSVC
+    set(HAVE_BUILDID 0)
+    set(HAVE_COMPRESSED_DEBUG_ZLIB_GNU 0)
+    set(HAVE_COMPRESSED_DEBUG_ZLIB_GABI 0)
+    set(HAVE_COMPRESSED_DEBUG_ZSTD 0)
+else()
+    check_linker_flag(C "-Wl,--build-id" HAVE_BUILDID)
+    check_linker_flag(C "-Wl,--compress-debug-sections=zlib-gnu" HAVE_COMPRESSED_DEBUG_ZLIB_GNU)
+    check_linker_flag(C "-Wl,--compress-debug-sections=zlib-gabi" HAVE_COMPRESSED_DEBUG_ZLIB_GABI)
+    check_linker_flag(C "-Wl,--compress-debug-sections=zst" HAVE_COMPRESSED_DEBUG_ZSTD)
+endif()
 
 
 # check for headers and functions
@@ -196,16 +207,18 @@ if (NOT HAVE_CLOCK_GETTIME)
 endif()
 
 
-# set warning flags
-list(APPEND WARNING_FLAGS
-    -W -Wall -Wwrite-strings -Wstrict-prototypes
-    -Wmissing-prototypes -Wold-style-definition
-    -Wmissing-format-attribute -Wcast-qual
-    -Wno-attributes -Wno-unknown-attributes
-    -Wpointer-arith
-)
-if (NOT DISABLE_WERROR)
-    list(APPEND WARNING_FLAGS -Werror)
+if (NOT MSVC)
+    # set warning flags
+    list(APPEND WARNING_FLAGS
+        -W -Wall -Wwrite-strings -Wstrict-prototypes
+        -Wmissing-prototypes -Wold-style-definition
+        -Wmissing-format-attribute -Wcast-qual
+        -Wno-attributes -Wno-unknown-attributes
+        -Wpointer-arith
+    )
+    if (NOT DISABLE_WERROR)
+        list(APPEND WARNING_FLAGS -Werror)
+    endif()
 endif()
 
 # common source files
@@ -340,6 +353,18 @@ var_to_01(BACKTRACE_SUPPORTS_DATA)
 # format backtrace-supported.h
 configure_file(backtrace-supported.h.in ${GENERATED_SOURCES}/backtrace-supported.h)
 
+# fix unistd.h problem for MSVC
+if (MSVC)
+    if (NOT EXISTS ${GENERATED_SOURCES}/unistd.h)
+        file(WRITE ${GENERATED_SOURCES}/unistd.h "
+            #include <io.h>
+            #include <basetsd.h>
+            #include <process.h>
+            typedef SSIZE_T ssize_t;
+        ")
+    endif()
+endif()
+
 
 function(add_backtrace_part TARGET_NAME)
     cmake_parse_arguments(PARSE_ARGV 1 PART "" "" "SRCS;DEFS;FLAGS")
@@ -354,7 +379,12 @@ endfunction()
 function(add_backtrace_part_with_pic TARGET_NAME)
     list(SUBLIST ARGV 1 -1 OPTARGS)
     add_backtrace_part(${TARGET_NAME} ${OPTARGS})
-    add_backtrace_part(${TARGET_NAME}_pic ${OPTARGS} FLAGS -fPIC)
+    if (MSVC)
+        # MSVC have no PIC option and Windows DLL doesn't need to be PIC 
+        add_library(${TARGET_NAME}_pic ALIAS ${TARGET_NAME})
+    else()
+        add_backtrace_part(${TARGET_NAME}_pic ${OPTARGS} FLAGS -fPIC)
+    endif()
 endfunction()
 
 add_backtrace_part_with_pic(common SRCS ${BACKTRACE_FILES})
@@ -424,7 +454,7 @@ install(
 
 
 # tests here ...
-if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING)
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTING AND BACKTRACE_SUPPORTED)
     function(add_backtrace_test TARGET_NAME)
         cmake_parse_arguments(PARSE_ARGV 1 TEST
             "WRAPPED;DSYM" "CWD" "SRCS;DEFS;PARTS;LINKS;COMMAND;FLAGS;LDFLAGS;DEPFILE")
