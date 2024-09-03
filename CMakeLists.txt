@@ -195,14 +195,16 @@ check_function_exists("readlink" HAVE_READLINK)
 check_function_exists("getpagesize" HAVE_GETPAGESIZE)
 check_function_exists("getexecname" HAVE_GETEXECNAME)
 
-check_function_exists("clock_gettime" HAVE_CLOCK_GETTIME)
-# At least for glibc, clock_gettime is in librt.  But don't
-# pull that in if it still doesn't give us the function we want.
-if (NOT HAVE_CLOCK_GETTIME)
-    unset(HAVE_CLOCK_GETTIME CACHE)
-    check_library_exists("rt" "clock_gettime" "" HAVE_CLOCK_GETTIME)
-    if (HAVE_CLOCK_GETTIME)
-        set(CLOCK_GETTIME_IN_LIBRT TRUE CACHE INTERNAL "clock_gettime is from librt")
+if (NOT DEFINED HAVE_CLOCK_GETTIME)
+    check_function_exists("clock_gettime" HAVE_CLOCK_GETTIME)
+    # At least for glibc, clock_gettime is in librt.  But don't
+    # pull that in if it still doesn't give us the function we want.
+    if (NOT HAVE_CLOCK_GETTIME)
+        unset(HAVE_CLOCK_GETTIME CACHE)
+        check_library_exists("rt" "clock_gettime" "" HAVE_CLOCK_GETTIME)
+        if (HAVE_CLOCK_GETTIME)
+            set(CLOCK_GETTIME_IN_LIBRT TRUE CACHE INTERNAL "clock_gettime is from librt")
+        endif()
     endif()
 endif()
 
