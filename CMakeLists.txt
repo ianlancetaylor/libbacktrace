@@ -440,8 +440,10 @@ install(
 )
 install(
     TARGETS backtrace
-    DESTINATION lib
     EXPORT libbacktrace-targets
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
 )
 install(
     EXPORT libbacktrace-targets
