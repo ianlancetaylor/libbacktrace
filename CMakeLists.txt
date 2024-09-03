@@ -443,6 +443,7 @@ install(
 )
 install(
     EXPORT libbacktrace-targets
+    NAMESPACE libbacktrace::
     DESTINATION CMake
 )
 install(
