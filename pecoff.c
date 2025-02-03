@@ -1061,31 +1061,34 @@ backtrace_initialize (struct backtrace_state *state,
 #endif
 
 #ifdef HAVE_WINDOWS_H
-  nt_dll_handle = GetModuleHandleW (L"ntdll.dll");
-  if (nt_dll_handle)
+  if ((uintptr_t) GetModuleHandle (NULL) == module_handle)
     {
-      LDR_REGISTER_FUNCTION register_func;
-      const char register_name[] = "LdrRegisterDllNotification";
-      register_func = (void*) GetProcAddress (nt_dll_handle,
-					      register_name);
+    nt_dll_handle = GetModuleHandleW (L"ntdll.dll");
+    if (nt_dll_handle)
+        {
+        LDR_REGISTER_FUNCTION register_func;
+        const char register_name[] = "LdrRegisterDllNotification";
+        register_func = (void*) GetProcAddress (nt_dll_handle,
+                            register_name);
 
-      if (register_func)
-	{
-	  PVOID cookie;
-	  struct dll_notification_context *context
-	    = backtrace_alloc (state,
-			       sizeof (struct dll_notification_context),
-			       error_callback, data);
+        if (register_func)
+        {
+        PVOID cookie;
+        struct dll_notification_context *context
+            = backtrace_alloc (state,
+                    sizeof (struct dll_notification_context),
+                    error_callback, data);
 
-	  if (context)
-	    {
-	      context->state = state;
-	      context->data = data;
-	      context->error_callback = error_callback;
+        if (context)
+            {
+            context->state = state;
+            context->data = data;
+            context->error_callback = error_callback;
 
-	      register_func (0, &dll_notification, context, &cookie);
-	    }
-	}
+            register_func (0, &dll_notification, context, &cookie);
+            }
+        }
+        }
     }
 #endif /* defined(HAVE_WINDOWS_H) */
 
