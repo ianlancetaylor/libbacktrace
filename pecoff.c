@@ -1013,7 +1013,7 @@ backtrace_initialize (struct backtrace_state *state,
 #ifdef HAVE_WINDOWS_H
   HMODULE nt_dll_handle;
 
-  module_handle = (uintptr_t) GetModuleHandle (state->filename);
+  module_handle = (uintptr_t) GetModuleHandleA (state->filename);
 #endif
 
   ret = coff_add (state, descriptor, error_callback, data,
