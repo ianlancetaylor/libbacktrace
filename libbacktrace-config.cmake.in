@@ -1,0 +1,9 @@
+if(libbacktrace_CONFIG_INCLUDED)
+    return()
+endif()
+set(libbacktrace_CONFIG_INCLUDED TRUE)
+
+@PACKAGE_INIT@
+
+include(${CMAKE_CURRENT_LIST_DIR}/libbacktrace-targets.cmake)
+check_required_components(libbacktrace)
