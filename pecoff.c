@@ -35,6 +35,10 @@ POSSIBILITY OF SUCH DAMAGE.  */
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdio.h>
 
 #include "backtrace.h"
 #include "internal.h"
@@ -267,6 +271,102 @@ coff_read4 (const unsigned char *p)
   return res;
 }
 
+/* Compute the CRC-32 of BUF/LEN.  This uses the CRC used for
+   .gnu_debuglink files.  */
+
+static uint32_t
+coff_crc32 (uint32_t crc, const unsigned char *buf, size_t len)
+{
+  static const uint32_t crc32_table[256] =
+    {
+      0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419,
+      0x706af48f, 0xe963a535, 0x9e6495a3, 0x0edb8832, 0x79dcb8a4,
+      0xe0d5e91e, 0x97d2d988, 0x09b64c2b, 0x7eb17cbd, 0xe7b82d07,
+      0x90bf1d91, 0x1db71064, 0x6ab020f2, 0xf3b97148, 0x84be41de,
+      0x1adad47d, 0x6ddde4eb, 0xf4d4b551, 0x83d385c7, 0x136c9856,
+      0x646ba8c0, 0xfd62f97a, 0x8a65c9ec, 0x14015c4f, 0x63066cd9,
+      0xfa0f3d63, 0x8d080df5, 0x3b6e20c8, 0x4c69105e, 0xd56041e4,
+      0xa2677172, 0x3c03e4d1, 0x4b04d447, 0xd20d85fd, 0xa50ab56b,
+      0x35b5a8fa, 0x42b2986c, 0xdbbbc9d6, 0xacbcf940, 0x32d86ce3,
+      0x45df5c75, 0xdcd60dcf, 0xabd13d59, 0x26d930ac, 0x51de003a,
+      0xc8d75180, 0xbfd06116, 0x21b4f4b5, 0x56b3c423, 0xcfba9599,
+      0xb8bda50f, 0x2802b89e, 0x5f058808, 0xc60cd9b2, 0xb10be924,
+      0x2f6f7c87, 0x58684c11, 0xc1611dab, 0xb6662d3d, 0x76dc4190,
+      0x01db7106, 0x98d220bc, 0xefd5102a, 0x71b18589, 0x06b6b51f,
+      0x9fbfe4a5, 0xe8b8d433, 0x7807c9a2, 0x0f00f934, 0x9609a88e,
+      0xe10e9818, 0x7f6a0dbb, 0x086d3d2d, 0x91646c97, 0xe6635c01,
+      0x6b6b51f4, 0x1c6c6162, 0x856530d8, 0xf262004e, 0x6c0695ed,
+      0x1b01a57b, 0x8208f4c1, 0xf50fc457, 0x65b0d9c6, 0x12b7e950,
+      0x8bbeb8ea, 0xfcb9887c, 0x62dd1ddf, 0x15da2d49, 0x8cd37cf3,
+      0xfbd44c65, 0x4db26158, 0x3ab551ce, 0xa3bc0074, 0xd4bb30e2,
+      0x4adfa541, 0x3dd895d7, 0xa4d1c46d, 0xd3d6f4fb, 0x4369e96a,
+      0x346ed9fc, 0xad678846, 0xda60b8d0, 0x44042d73, 0x33031de5,
+      0xaa0a4c5f, 0xdd0d7cc9, 0x5005713c, 0x270241aa, 0xbe0b1010,
+      0xc90c2086, 0x5768b525, 0x206f85b3, 0xb966d409, 0xce61e49f,
+      0x5edef90e, 0x29d9c998, 0xb0d09822, 0xc7d7a8b4, 0x59b33d17,
+      0x2eb40d81, 0xb7bd5c3b, 0xc0ba6cad, 0xedb88320, 0x9abfb3b6,
+      0x03b6e20c, 0x74b1d29a, 0xead54739, 0x9dd277af, 0x04db2615,
+      0x73dc1683, 0xe3630b12, 0x94643b84, 0x0d6d6a3e, 0x7a6a5aa8,
+      0xe40ecf0b, 0x9309ff9d, 0x0a00ae27, 0x7d079eb1, 0xf00f9344,
+      0x8708a3d2, 0x1e01f268, 0x6906c2fe, 0xf762575d, 0x806567cb,
+      0x196c3671, 0x6e6b06e7, 0xfed41b76, 0x89d32be0, 0x10da7a5a,
+      0x67dd4acc, 0xf9b9df6f, 0x8ebeeff9, 0x17b7be43, 0x60b08ed5,
+      0xd6d6a3e8, 0xa1d1937e, 0x38d8c2c4, 0x4fdff252, 0xd1bb67f1,
+      0xa6bc5767, 0x3fb506dd, 0x48b2364b, 0xd80d2bda, 0xaf0a1b4c,
+      0x36034af6, 0x41047a60, 0xdf60efc3, 0xa867df55, 0x316e8eef,
+      0x4669be79, 0xcb61b38c, 0xbc66831a, 0x256fd2a0, 0x5268e236,
+      0xcc0c7795, 0xbb0b4703, 0x220216b9, 0x5505262f, 0xc5ba3bbe,
+      0xb2bd0b28, 0x2bb45a92, 0x5cb36a04, 0xc2d7ffa7, 0xb5d0cf31,
+      0x2cd99e8b, 0x5bdeae1d, 0x9b64c2b0, 0xec63f226, 0x756aa39c,
+      0x026d930a, 0x9c0906a9, 0xeb0e363f, 0x72076785, 0x05005713,
+      0x95bf4a82, 0xe2b87a14, 0x7bb12bae, 0x0cb61b38, 0x92d28e9b,
+      0xe5d5be0d, 0x7cdcefb7, 0x0bdbdf21, 0x86d3d2d4, 0xf1d4e242,
+      0x68ddb3f8, 0x1fda836e, 0x81be16cd, 0xf6b9265b, 0x6fb077e1,
+      0x18b74777, 0x88085ae6, 0xff0f6a70, 0x66063bca, 0x11010b5c,
+      0x8f659eff, 0xf862ae69, 0x616bffd3, 0x166ccf45, 0xa00ae278,
+      0xd70dd2ee, 0x4e048354, 0x3903b3c2, 0xa7672661, 0xd06016f7,
+      0x4969474d, 0x3e6e77db, 0xaed16a4a, 0xd9d65adc, 0x40df0b66,
+      0x37d83bf0, 0xa9bcae53, 0xdebb9ec5, 0x47b2cf7f, 0x30b5ffe9,
+      0xbdbdf21c, 0xcabac28a, 0x53b39330, 0x24b4a3a6, 0xbad03605,
+      0xcdd70693, 0x54de5729, 0x23d967bf, 0xb3667a2e, 0xc4614ab8,
+      0x5d681b02, 0x2a6f2b94, 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b,
+      0x2d02ef8d
+    };
+  const unsigned char *end;
+
+  crc = ~crc;
+  for (end = buf + len; buf < end; ++ buf)
+    crc = crc32_table[(crc ^ *buf) & 0xff] ^ (crc >> 8);
+  return ~crc;
+}
+
+/* Return the CRC-32 of the entire file open at DESCRIPTOR.  */
+
+static uint32_t
+coff_crc32_file (struct backtrace_state *state, int descriptor,
+		  backtrace_error_callback error_callback, void *data)
+{
+  struct stat st;
+  struct backtrace_view file_view;
+  uint32_t ret;
+
+  if (fstat (descriptor, &st) < 0)
+    {
+      error_callback (data, "fstat", errno);
+      return 0;
+    }
+
+  if (!backtrace_get_view (state, descriptor, 0, st.st_size, error_callback,
+			   data, &file_view))
+    return 0;
+
+  ret = coff_crc32 (0, (const unsigned char *) file_view.data, st.st_size);
+
+  backtrace_release_view (state, &file_view, error_callback, data);
+
+  return ret;
+}
+
 /* Read a potentially unaligned 2 byte word at P, using native endianness.
    All 2 byte word in symbols are always aligned, but for coherency all
    fields are declared as char arrays.  */
@@ -278,6 +378,177 @@ coff_read2 (const unsigned char *p)
 
   memcpy (&res, p, sizeof (res));
   return res;
+}
+
+/* Try to open a file whose name is PREFIX (length PREFIX_LEN)
+   concatenated with PREFIX2 (length PREFIX2_LEN) concatenated with
+   DEBUGLINK_NAME.  Returns an open file descriptor, or -1.  */
+
+static int
+coff_try_debugfile (struct backtrace_state *state, const char *prefix,
+                    size_t prefix_len, const char *prefix2, size_t prefix2_len,
+                    const char *debuglink_name,
+                    backtrace_error_callback error_callback, void *data)
+{
+  size_t debuglink_len;
+  size_t try_len;
+  char *try;
+  int does_not_exist;
+  int ret;
+
+  debuglink_len = strlen (debuglink_name);
+  try_len = prefix_len + prefix2_len + debuglink_len + 1;
+  try = backtrace_alloc (state, try_len, error_callback, data);
+  if (try == NULL)
+    return -1;
+
+  memcpy (try, prefix, prefix_len);
+  memcpy (try + prefix_len, prefix2, prefix2_len);
+  memcpy (try + prefix_len + prefix2_len, debuglink_name, debuglink_len);
+  try[prefix_len + prefix2_len + debuglink_len] = '\0';
+
+  ret = backtrace_open (try, error_callback, data, &does_not_exist);
+
+  /* If we successfully opened the candidate debug file, show the full
+     path so the user can confirm which file was used.  Free 'try' after
+     this diagnostic. */
+
+  if (ret >= 0)
+    {
+  backtrace_free (state, try, try_len, error_callback, data);
+    }
+  else
+    backtrace_free (state, try, try_len, error_callback, data);
+
+  return ret;
+}
+
+/* Find a separate debug info file, using the debuglink section data
+   to find it.  Returns an open file descriptor, or -1.  */
+
+static int
+coff_find_debugfile_by_debuglink (struct backtrace_state *state,
+                                  const char *filename,
+                                  const char *debuglink_name,
+                                  backtrace_error_callback error_callback,
+                                  void *data)
+{
+  int ret;
+  char *alc;
+  size_t alc_len;
+  /* 'slash' was used in older code; directory separator handling is below. */
+  int ddescriptor;
+  const char *prefix;
+  size_t prefix_len;
+
+  ret = -1;
+  alc = NULL;
+  alc_len = 0;
+
+  /* Look for DEBUGLINK_NAME in the same directory as FILENAME.  */
+
+  {
+    const char *last_slash = strrchr (filename, '/');
+    const char *last_bslash = strrchr (filename, '\\');
+    /* Pick the last directory separator, supporting both Unix and
+       Windows-style paths. */
+    if (last_slash == NULL && last_bslash == NULL)
+      {
+        prefix = "";
+        prefix_len = 0;
+      }
+    else
+      {
+        const char *sep = last_slash;
+        if (last_bslash != NULL && (last_slash == NULL || last_bslash > last_slash))
+          sep = last_bslash;
+        /* Move past the separator for the prefix length. */
+        prefix = filename;
+        prefix_len = (sep - filename) + 1;
+      }
+  }
+
+  ddescriptor = coff_try_debugfile (state, prefix, prefix_len, "", 0,
+                                    debuglink_name, error_callback, data);
+  if (ddescriptor >= 0)
+    {
+      ret = ddescriptor;
+      goto done;
+    }
+
+  /* Look for DEBUGLINK_NAME in a .debug subdirectory of FILENAME.  */
+
+#ifndef HAVE_WINDOWS_H
+  ddescriptor = coff_try_debugfile (state, prefix, prefix_len, ".debug/",
+                                    strlen (".debug/"), debuglink_name,
+                                    error_callback, data);
+  if (ddescriptor >= 0)
+    {
+      ret = ddescriptor;
+      goto done;
+    }
+
+  /* Look for DEBUGLINK_NAME in /usr/lib/debug.  */
+  
+  ddescriptor = coff_try_debugfile (state, "/usr/lib/debug/",
+                                    strlen ("/usr/lib/debug/"), prefix,
+                                    prefix_len, debuglink_name,
+                                    error_callback, data);
+
+  if (ddescriptor >= 0)
+    ret = ddescriptor;
+#else
+  ddescriptor = coff_try_debugfile (state, prefix, prefix_len, ".debug\\",
+                                    strlen (".debug\\"), debuglink_name,
+                                    error_callback, data);
+  if (ddescriptor >= 0)
+    ret = ddescriptor;
+#endif
+
+ done:
+  if (alc != NULL && alc_len > 0)
+    backtrace_free (state, alc, alc_len, error_callback, data);
+  return ret;
+}
+
+/* Open a separate debug info file, using the debuglink section data
+   to find it.  Returns an open file descriptor, or -1.  */
+
+static int
+coff_open_debugfile_by_debuglink (struct backtrace_state *state,
+                                  const char *filename,
+                                  const char *debuglink_name,
+                                  uint32_t debuglink_crc,
+                                  backtrace_error_callback error_callback,
+                                  void *data)
+{
+  int ddescriptor;
+
+  ddescriptor = coff_find_debugfile_by_debuglink (state, filename,
+                                                  debuglink_name,
+                                                  error_callback, data);
+  if (ddescriptor < 0)
+    return -1;
+
+  if (debuglink_crc != 0)
+    {
+      uint32_t got_crc;
+
+      got_crc = coff_crc32_file (state, ddescriptor, error_callback, data);
+      if (got_crc != debuglink_crc)
+        {
+          {
+            char _msg[256];
+            snprintf (_msg, sizeof (_msg), "CRC mismatch for %s: got 0x%08x expected 0x%08x",
+                      filename ? filename : "(unknown)", got_crc, debuglink_crc);
+            error_callback (data, _msg, 0);
+          }
+          backtrace_close (ddescriptor, error_callback, data);
+          return -1;
+        }
+    }
+
+  return ddescriptor;
 }
 
 /* Return the length (without the trailing 0) of a COFF short name.  */
@@ -632,7 +903,7 @@ coff_syminfo (struct backtrace_state *state, uintptr_t addr,
    0 on failure (in both cases descriptor is closed).  */
 
 static int
-coff_add (struct backtrace_state *state, int descriptor,
+coff_add (struct backtrace_state *state, const char *filename, int descriptor,
 	  backtrace_error_callback error_callback, void *data,
 	  fileline *fileline_fn, int *found_sym, int *found_dwarf,
 	  uintptr_t module_handle ATTRIBUTE_UNUSED)
@@ -663,6 +934,13 @@ coff_add (struct backtrace_state *state, int descriptor,
   off_t max_offset;
   struct backtrace_view debug_view;
   int debug_view_valid;
+  const char *debuglink_name;
+  uint32_t debuglink_crc;
+  int debuglink_view_valid;
+  struct backtrace_view debuglink_view;
+  const char *debugaltlink_name;
+  int debugaltlink_view_valid;
+  struct backtrace_view debugaltlink_view;
   int is_64;
   struct libbacktrace_base_address image_base;
   struct libbacktrace_base_address base_address;
@@ -675,6 +953,11 @@ coff_add (struct backtrace_state *state, int descriptor,
   syms_view_valid = 0;
   str_view_valid = 0;
   debug_view_valid = 0;
+  debuglink_view_valid = 0;
+  debugaltlink_view_valid = 0;
+  debuglink_name = NULL;
+  debuglink_crc = 0;
+  debugaltlink_name = NULL;
 
   /* Map the MS-DOS stub (if any) and extract file header offset.  */
   if (!backtrace_get_view (state, descriptor, 0, 0x40, error_callback,
@@ -830,6 +1113,56 @@ coff_add (struct backtrace_state *state, int descriptor,
 		s->virtual_size : s->size_of_raw_data;
 	      break;
 	    }
+      /* Read .gnu_debuglink and .gnu_debugaltlink if present.  */
+      if (s->name[0] == '/')
+        str_off = atoi (s->name + 1);
+      else
+        str_off = 0;
+
+      /* Compare names for .gnu_debuglink and .gnu_debugaltlink.  */
+      if ((!debuglink_view_valid) && (str_off != 0 ?
+           coff_long_name_eq (".gnu_debuglink", str_off, &str_view) :
+           coff_short_name_eq (".gnu_debuglink", s->name)))
+        {
+          if (!backtrace_get_view (state, descriptor, s->pointer_to_raw_data,
+                                   s->virtual_size <= s->size_of_raw_data ?
+                                   s->virtual_size : s->size_of_raw_data,
+                                   error_callback, data, &debuglink_view))
+            goto fail;
+          debuglink_view_valid = 1;
+          /* Extract name and CRC from view. */
+          {
+            const char *debuglink_data = (const char *) debuglink_view.data;
+            size_t crc_offset = strnlen (debuglink_data,
+                                         s->virtual_size <= s->size_of_raw_data ?
+                                         s->virtual_size : s->size_of_raw_data);
+            crc_offset = (crc_offset + 3) & ~3;
+            if (crc_offset + 4 <= (size_t) (s->virtual_size <= s->size_of_raw_data ?
+                                            s->virtual_size : s->size_of_raw_data))
+              {
+                debuglink_name = debuglink_data;
+                debuglink_crc = *(const uint32_t*) (debuglink_data + crc_offset);
+                {
+                  char _msg[512];
+                  snprintf (_msg, sizeof (_msg), "Found .gnu_debuglink: %s CRC: 0x%08x (original: %s)",
+                            debuglink_name, debuglink_crc, filename ? filename : "");
+                  error_callback (data, _msg, 0);
+                }
+              }
+          }
+        }
+      if ((!debugaltlink_view_valid) && (str_off != 0 ?
+           coff_long_name_eq (".gnu_debugaltlink", str_off, &str_view) :
+           coff_short_name_eq (".gnu_debugaltlink", s->name)))
+        {
+          if (!backtrace_get_view (state, descriptor, s->pointer_to_raw_data,
+                                   s->virtual_size <= s->size_of_raw_data ?
+                                   s->virtual_size : s->size_of_raw_data,
+                                   error_callback, data, &debugaltlink_view))
+            goto fail;
+          debugaltlink_view_valid = 1;
+          debugaltlink_name = (const char *) debugaltlink_view.data;
+        }
 	}
     }
 
@@ -863,6 +1196,103 @@ coff_add (struct backtrace_state *state, int descriptor,
     {
       backtrace_release_view (state, &syms_view, error_callback, data);
       syms_view_valid = 0;
+    }
+
+  /* If a separate debug file is specified via .gnu_debuglink, try to open
+     it and use that file's debug info instead. */
+  if (debuglink_name != NULL)
+    {
+      int d;
+      d = coff_open_debugfile_by_debuglink (state, filename, debuglink_name,
+                                            debuglink_crc, error_callback, data);
+      if (d >= 0)
+        {
+          int ret;
+
+          if (debuglink_view_valid)
+            backtrace_release_view (state, &debuglink_view, error_callback, data);
+          if (debugaltlink_view_valid)
+            backtrace_release_view (state, &debugaltlink_view, error_callback, data);
+          {
+            char _msg_use[512];
+            snprintf (_msg_use, sizeof (_msg_use), "Using external debug file specified in .gnu_debuglink: %s", debuglink_name);
+            error_callback (data, _msg_use, 0);
+          }
+          ret = coff_add (state, debuglink_name, d, error_callback, data, fileline_fn,
+                          found_sym, found_dwarf, module_handle);
+          if (ret <= 0)
+            {
+              /* External parse failed: report and close external descriptor,
+                  then fall back to using embedded DWARF in the original file. */
+              {
+                char _msg_pf[512];
+                snprintf (_msg_pf, sizeof (_msg_pf),
+                          "Failed to parse external debug file '%s' specified in .gnu_debuglink for %s; falling back to embedded DWARF",
+                          debuglink_name, filename ? filename : "(unknown)");
+                error_callback (data, _msg_pf, 0);
+              }
+              backtrace_close (d, error_callback, data);
+              /* Do not return; continue and try embedded debug sections. */
+            }
+          else
+            {
+              if (descriptor >= 0)
+                backtrace_close (descriptor, error_callback, data);
+              return ret;
+            }
+        }
+      else
+        {
+          /* Could not open or validate external debug file; report fallback. */
+          char _msg_of[512];
+          snprintf (_msg_of, sizeof (_msg_of),
+                    "Could not open/validate external debug file '%s' from .gnu_debuglink for %s; falling back to embedded DWARF if present",
+                    debuglink_name, filename ? filename : "(unknown)");
+          error_callback (data, _msg_of, 0);
+        }
+    }
+  if (debugaltlink_name != NULL)
+    {
+      int d;
+      d = coff_open_debugfile_by_debuglink (state, filename, debugaltlink_name,
+                                            0, error_callback, data);
+      if (d >= 0)
+        {
+          int ret;
+
+          if (debuglink_view_valid)
+            backtrace_release_view (state, &debuglink_view, error_callback, data);
+          if (debugaltlink_view_valid)
+            backtrace_release_view (state, &debugaltlink_view, error_callback, data);
+          ret = coff_add (state, filename, d, error_callback, data, fileline_fn,
+                          found_sym, found_dwarf, module_handle);
+          if (ret <= 0)
+            {
+              {
+                char _msg_pf2[512];
+                snprintf (_msg_pf2, sizeof (_msg_pf2),
+                          "Failed to parse external debugaltlink file '%s' for %s; falling back to embedded DWARF",
+                          debugaltlink_name, filename ? filename : "(unknown)");
+                error_callback (data, _msg_pf2, 0);
+              }
+              backtrace_close (d, error_callback, data);
+              /* Fall back to embedded DWARF in the original file. */
+            }
+          else
+            {
+              if (descriptor >= 0)
+                backtrace_close (descriptor, error_callback, data);
+              return ret;
+            }
+        }
+      else
+        {
+          char _msg_of2[512];
+          snprintf (_msg_of2, sizeof (_msg_of2),
+                    "Could not open/validate external debugaltlink file '%s' for %s; falling back to embedded DWARF if present",
+                    debugaltlink_name, filename ? filename : "(unknown)");
+          error_callback (data, _msg_of2, 0);
+        }
     }
 
   /* Read all the debug sections in a single view, since they are
@@ -961,7 +1391,7 @@ dll_notification (ULONG reason,
     (struct dll_notification_context*) context;
   struct backtrace_state *state = dll_context->state;
   void *data = dll_context->data;
-  backtrace_error_callback error_callback = dll_context->data;
+  backtrace_error_callback error_callback = dll_context->error_callback;
   fileline fileline;
   int found_sym;
   int found_dwarf;
@@ -984,7 +1414,7 @@ dll_notification (ULONG reason,
   if (descriptor < 0)
     return;
 
-  coff_add (state, descriptor, error_callback, data, &fileline, &found_sym,
+  coff_add (state, module_name, descriptor, error_callback, data, &fileline, &found_sym,
 	    &found_dwarf, (uintptr_t) module_handle);
 }
 #endif /* defined(HAVE_WINDOWS_H) */
@@ -1016,7 +1446,7 @@ backtrace_initialize (struct backtrace_state *state,
   module_handle = (uintptr_t) GetModuleHandle (NULL);
 #endif
 
-  ret = coff_add (state, descriptor, error_callback, data,
+  ret = coff_add (state, filename, descriptor, error_callback, data,
 		  &coff_fileline_fn, &found_sym, &found_dwarf, module_handle);
   if (!ret)
     return 0;
@@ -1049,7 +1479,7 @@ backtrace_initialize (struct backtrace_state *state,
 	  if (descriptor < 0)
 	    continue;
 
-	  coff_add (state, descriptor, error_callback, data,
+	  coff_add (state, entry.szExePath, descriptor, error_callback, data,
 		    &module_fileline_fn, &module_found_sym, &found_dwarf,
 		    module_handle);
 	  if (module_found_sym)
