@@ -1,0 +1,33 @@
+#!/bin/sh
+
+if [ ! -f "./@NAME@.debug" ]; then
+    echo "Error: debug info not present!"
+    exit 1
+fi
+
+if [ ! -f "./@NAME@.build-id" ]; then
+    echo "Error: missing build ID for debug info!"
+    exit 1
+fi
+
+tmp_dir=$(mktemp -d /tmp/dbg.XXXXX)
+
+# patch the executable
+cp -t $tmp_dir ./@NAME@
+target=$tmp_dir/@NAME@
+found=$(strings -td $target | grep /usr/lib/debug/.build-id/)
+bpos=$(echo $found | cut -d " " -f 1)
+echo $tmp_dir | dd of=$target bs=1 seek=$bpos count=14 conv=notrunc
+
+# link debug info to where it should be
+build_id_as_dir="$(cut -c 1-2 ./@NAME@.build-id)/$(cut -c 3- ./@NAME@.build-id)"
+tmp_debug_path="$tmp_dir/.build-id/$build_id_as_dir.debug"
+mkdir -p $(dirname $tmp_debug_path)
+ln -s $(readlink -f ./@NAME@.debug) $tmp_debug_path
+
+$target # run patched target
+exit_code=$?
+
+rm -rf $tmp_dir
+
+exit $exit_code
