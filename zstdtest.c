@@ -297,8 +297,8 @@ test_large (struct backtrace_state *state ATTRIBUTE_UNUSED)
   size_t orig_bufsize;
   size_t i;
   char *compressed_buf;
-  size_t compressed_bufsize;
   size_t compressed_size;
+  size_t chunk_size;
   unsigned char *uncompressed_buf;
   size_t r;
   clockid_t cid;
@@ -370,22 +370,39 @@ test_large (struct backtrace_state *state ATTRIBUTE_UNUSED)
       return;
     }
 
-  compressed_bufsize = ZSTD_compressBound (orig_bufsize);
-  compressed_buf = malloc (compressed_bufsize);
-  if (compressed_buf == NULL)
-    {
-      perror ("malloc");
-      goto fail;
-    }
+  /* Split the input into 100K chunks. This is to approximate the fact that lld
+     splits the input into 1M shards. */
 
-  r = ZSTD_compress (compressed_buf, compressed_bufsize,
-		     orig_buf, orig_bufsize, 3);
-  if (ZSTD_isError (r))
+  compressed_size = 0;
+  compressed_buf = NULL;
+  chunk_size = 100 << 10;
+  for (i = 0; i < orig_bufsize; i += chunk_size)
     {
-      fprintf (stderr, "zstd compress failed: %s\n", ZSTD_getErrorName (r));
-      goto fail;
+      size_t chunk_input_size;
+      size_t chunk_compressed_size;
+
+      chunk_input_size = orig_bufsize - i;
+      if (chunk_input_size > chunk_size)
+	chunk_input_size = chunk_size;
+
+      chunk_compressed_size = ZSTD_compressBound (chunk_input_size);
+      compressed_buf = realloc (compressed_buf, compressed_size + chunk_compressed_size);
+      if (compressed_buf == NULL)
+	{
+	  perror ("realloc");
+	  goto fail;
+	}
+
+      r = ZSTD_compress (compressed_buf + compressed_size,
+			 chunk_compressed_size,
+			 orig_buf + i, chunk_input_size, 3);
+      if (ZSTD_isError (r))
+	{
+	  fprintf (stderr, "zstd compress failed: %s\n", ZSTD_getErrorName (r));
+	  goto fail;
+	}
+      compressed_size += r;
     }
-  compressed_size = r;
 
   uncompressed_buf = malloc (orig_bufsize);
   if (uncompressed_buf == NULL)
