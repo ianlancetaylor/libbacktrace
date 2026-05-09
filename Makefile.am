@@ -84,6 +84,9 @@ libbacktrace_la_LIBADD = \
 
 libbacktrace_la_DEPENDENCIES = $(libbacktrace_la_LIBADD)
 
+pkgconfigdir = $(libdir)/pkgconfig
+pkgconfig_DATA = libbacktrace.pc
+
 # Testsuite.
 
 # Add a test to this variable if you want it to be built as a program,

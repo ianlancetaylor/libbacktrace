@@ -30,7 +30,8 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 AC_PREREQ(2.69)
-AC_INIT(package-unused, version-unused,, libbacktrace)
+AC_INIT(libbacktrace, 1.0, https://github.com/ianlancetaylor/libbacktrace/issues,
+        libbacktrace, https://github.com/ianlancetaylor/libbacktrace)
 AC_CONFIG_SRCDIR(backtrace.h)
 AC_CONFIG_HEADER(config.h)
 AC_CONFIG_MACRO_DIR(config)
@@ -606,7 +607,7 @@ else
   multilib_arg=
 fi
 
-AC_CONFIG_FILES(Makefile backtrace-supported.h)
+AC_CONFIG_FILES(Makefile backtrace-supported.h libbacktrace.pc)
 AC_CONFIG_FILES(install-debuginfo-for-buildid.sh, chmod +x install-debuginfo-for-buildid.sh)
 
 # We need multilib support, but only if configuring for the target.
