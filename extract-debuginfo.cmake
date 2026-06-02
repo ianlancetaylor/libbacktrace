@@ -1,0 +1,21 @@
+if (FULL)
+    set(STRIP_OPT --strip-all)
+else()
+    set(STRIP_OPT --strip-debug)
+endif()
+
+get_filename_component(SRC_DIR ${SRC} DIRECTORY)
+get_filename_component(SRC_STEM ${SRC} NAME_WE)
+get_filename_component(DST_DIR ${DST} DIRECTORY)
+get_filename_component(DST_STEM ${DST} NAME_WE)
+
+if (BUILD_ID)
+    execute_process(COMMAND ${READELF} -n ${SRC} OUTPUT_VARIABLE READELF_RESULT)
+    string(REGEX MATCH "Build ID: *([a-z0-9]+)" MATCH ${READELF_RESULT})
+    set(BUILD_ID ${CMAKE_MATCH_1})
+    file(WRITE ${DST_DIR}/${DST_STEM}.build-id ${BUILD_ID})
+endif()
+
+set(DBGINFO ${DST_DIR}/${DST_STEM}.debug)
+execute_process(COMMAND ${OBJCOPY} --only-keep-debug ${SRC} ${DBGINFO})
+execute_process(COMMAND ${OBJCOPY} ${STRIP_OPT} --add-gnu-debuglink=${DBGINFO} ${SRC} ${DST})
