@@ -182,6 +182,31 @@ static const struct zstd_test tests[] =
      "\xb4\x21\x45\x3b\x10\xe4\x7b\x99\x4d\x8a\x36\x64\x5c\x77\x08\x02"
      "\xcb\xe0\xce"),
     179,
+  },
+  {
+    "window-descriptor",
+    "hello, world\n",
+    0,
+    ("\x28\xb5\x2f\xfd"
+     "\x04" /* no Single_Segment_flag; Frame_Content_Size_flag = 0 */
+     "\x00" /* Window_Descriptor */
+     "\x69\x00\x00"
+     "\x68\x65\x6c\x6c\x6f\x2c\x20\x77\x6f\x72\x6c\x64\x0a"
+     "\x4c\x1f\xf9\xf1"),
+    26,
+  },
+  {
+    "window-descriptor-and-content-size",
+    "hello, world\n",
+    0,
+    ("\x28\xb5\x2f\xfd"
+     "\x84" /* no Single_Segment_flag; Frame_Content_Size_flag = 2 */
+     "\x00" /* Window_Descriptor */
+     "\x0d\x00\x00\x00" /* Frame_Content_Size */
+     "\x69\x00\x00"
+     "\x68\x65\x6c\x6c\x6f\x2c\x20\x77\x6f\x72\x6c\x64\x0a"
+     "\x4c\x1f\xf9\xf1"),
+    30,
   }
 };
 
