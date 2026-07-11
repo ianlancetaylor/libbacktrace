@@ -1,0 +1,57 @@
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+
+name: example
+
+jobs:
+  R-CMD-check:
+    runs-on: ${{ matrix.config.os }}
+
+    name: ${{ matrix.config.os }} ${{ matrix.config.msystem }}
+
+    defaults:
+      run:
+        shell: ${{ matrix.config.shell }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: macOS-latest, shell: bash, allow_fail: true }
+          - {os: windows-latest, shell: 'msys2 {0}', msystem: MINGW64, allow_fail: true }
+          - {os: windows-latest, shell: 'msys2 {0}', msystem: MINGW32, allow_fail: true }
+          - {os: ubuntu-22.04, shell: bash, allow_fail: false }
+          - {os: ubuntu-20.04, shell: bash, allow_fail: false }
+          - {os: ubuntu-18.04, shell: bash, allow_fail: false }
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: ${{ matrix.config.msystem }}
+          install: 'gcc make'
+
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          ../configure && rm config.log
+
+      - name: Make
+        run: |
+          cd build
+          make
+
+      - name: Check
+        run: |
+          cd build
+          make check || ( head -n 1000 *.log && ${{ matrix.config.allow_fail }} )
