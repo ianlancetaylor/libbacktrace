@@ -677,8 +677,11 @@ coff_add (struct backtrace_state *state, int descriptor,
   int debug_view_valid;
   int is_64;
   struct libbacktrace_base_address image_base;
+  struct libbacktrace_base_address module_base;
   struct libbacktrace_base_address base_address;
   struct dwarf_sections dwarf_sections;
+
+  module_base.m = module_handle;
 
   *found_sym = 0;
   *found_dwarf = 0;
@@ -854,7 +857,7 @@ coff_add (struct backtrace_state *state, int descriptor,
       if (sdata == NULL)
 	goto fail;
 
-      if (!coff_initialize_syminfo (state, image_base, is_64,
+      if (!coff_initialize_syminfo (state, module_base, is_64,
 				    sects, sects_num,
 				    syms_view.data, syms_size,
 				    str_view.data, str_size,
