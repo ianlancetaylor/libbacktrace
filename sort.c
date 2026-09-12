@@ -33,6 +33,7 @@ POSSIBILITY OF SUCH DAMAGE.  */
 #include "config.h"
 
 #include <stddef.h>
+#include <string.h>
 #include <sys/types.h>
 
 #include "backtrace.h"
@@ -40,12 +41,40 @@ POSSIBILITY OF SUCH DAMAGE.  */
 
 /* The GNU glibc version of qsort allocates memory, which we must not
    do if we are invoked by a signal handler.  So provide our own
-   sort.  */
+   sort.
+
+   Quicksort alone has no worst-case bound, and real symbol tables do
+   reach it: on one 300 MB Go binary the partition work is 122 times
+   n*log2(n), which is twelve seconds.  Cap the recursion depth and
+   finish with an in-place heapsort past that, bounding the worst case
+   at O(n log n) for any input.  Heapsort allocates nothing, so the
+   reason this file exists is preserved.  */
 
 static void
 swap (char *a, char *b, size_t size)
 {
   size_t i;
+
+  /* Swap a machine word at a time when the element size permits.  The
+     byte loop below cannot be widened by the compiler, as size is a
+     runtime value and the pointers are char *.  memcpy rather than a
+     cast, so that no aliasing assumption is introduced; the compiler
+     emits a plain load and store for each word.  */
+  if (size % sizeof (uintptr_t) == 0)
+    {
+      size_t nwords = size / sizeof (uintptr_t);
+
+      for (i = 0; i < nwords; i++)
+	{
+	  uintptr_t ta, tb;
+
+	  memcpy (&ta, a + i * sizeof ta, sizeof ta);
+	  memcpy (&tb, b + i * sizeof tb, sizeof tb);
+	  memcpy (a + i * sizeof tb, &tb, sizeof tb);
+	  memcpy (b + i * sizeof ta, &ta, sizeof ta);
+	}
+      return;
+    }
 
   for (i = 0; i < size; i++, a++, b++)
     {
@@ -57,17 +86,65 @@ swap (char *a, char *b, size_t size)
     }
 }
 
-void
-backtrace_qsort (void *basearg, size_t count, size_t size,
-		 int (*compar) (const void *, const void *))
+/* Sift the element at index I down into the heap rooted at BASE.  */
+
+static void
+sift_down (char *base, size_t i, size_t count, size_t size,
+	   int (*compar) (const void *, const void *))
 {
-  char *base = (char *) basearg;
+  for (;;)
+    {
+      size_t child = 2 * i + 1;
+
+      if (child >= count)
+	break;
+      if (child + 1 < count
+	  && (*compar) (base + child * size, base + (child + 1) * size) < 0)
+	++child;
+      if ((*compar) (base + i * size, base + child * size) >= 0)
+	break;
+      swap (base + i * size, base + child * size, size);
+      i = child;
+    }
+}
+
+/* In-place heapsort, used once the quicksort recursion gets too deep.
+   Allocates nothing.  */
+
+static void
+heap_sort (char *base, size_t count, size_t size,
+	   int (*compar) (const void *, const void *))
+{
+  size_t i;
+
+  if (count < 2)
+    return;
+  for (i = count / 2; i > 0; i--)
+    sift_down (base, i - 1, count, size, compar);
+  for (i = count - 1; i > 0; i--)
+    {
+      swap (base, base + i * size, size);
+      sift_down (base, 0, i, size, compar);
+    }
+}
+
+static void
+qsort_limited (char *base, size_t count, size_t size,
+	       int (*compar) (const void *, const void *), unsigned depth)
+{
   size_t i;
   size_t mid;
 
  tail_recurse:
   if (count < 2)
     return;
+
+  if (depth == 0)
+    {
+      heap_sort (base, count, size, compar);
+      return;
+    }
+  --depth;
 
   /* The symbol table and DWARF tables, which is all we use this
      routine for, tend to be roughly sorted.  Pick the middle element
@@ -93,16 +170,31 @@ backtrace_qsort (void *basearg, size_t count, size_t size,
      ensures that our maximum stack depth is log count.  */
   if (2 * mid < count)
     {
-      backtrace_qsort (base, mid, size, compar);
+      qsort_limited (base, mid, size, compar, depth);
       base += (mid + 1) * size;
       count -= mid + 1;
       goto tail_recurse;
     }
   else
     {
-      backtrace_qsort (base + (mid + 1) * size, count - (mid + 1),
-		       size, compar);
+      qsort_limited (base + (mid + 1) * size, count - (mid + 1),
+		     size, compar, depth);
       count = mid;
       goto tail_recurse;
     }
+}
+
+void
+backtrace_qsort (void *basearg, size_t count, size_t size,
+		 int (*compar) (const void *, const void *))
+{
+  unsigned depth = 0;
+  size_t c = count;
+
+  while (c > 1)
+    {
+      ++depth;
+      c >>= 1;
+    }
+  qsort_limited ((char *) basearg, count, size, compar, 2 * depth);
 }
