@@ -67,6 +67,14 @@ AM_MAINTAINER_MODE
 AC_ARG_WITH(target-subdir,
 [  --with-target-subdir=SUBDIR      Configuring in a subdirectory for target])
 
+AC_ARG_WITH(separate-debug-dir,
+[  --with-separate-debug-dir=DEBUGDIR      Look for global separate debug info in this path @<:@LIBDIR/debug@:>@],
+[separate_debug_dir=$withval],
+[separate_debug_dir=$libdir/debug])
+
+SEPARATE_DEBUG_DIR=$separate_debug_dir
+AC_SUBST(SEPARATE_DEBUG_DIR)
+
 # We must force CC to /not/ be precious variables; otherwise
 # the wrong, non-multilib-adjusted value will be used in multilibs.
 # As a side effect, we have to subst CFLAGS ourselves.
