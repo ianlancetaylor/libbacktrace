@@ -32,6 +32,7 @@ POSSIBILITY OF SUCH DAMAGE.  */
 
 #include "config.h"
 
+#include <stdlib.h>
 #include <stddef.h>
 #include <sys/types.h>
 
@@ -43,13 +44,13 @@ POSSIBILITY OF SUCH DAMAGE.  */
    sort.  */
 
 static void
-swap (char *a, char *b, size_t size)
+swap (uintptr_t *a, uintptr_t *b, size_t size)
 {
   size_t i;
 
   for (i = 0; i < size; i++, a++, b++)
     {
-      char t;
+      uintptr_t t;
 
       t = *a;
       *a = *b;
@@ -57,11 +58,10 @@ swap (char *a, char *b, size_t size)
     }
 }
 
-void
-backtrace_qsort (void *basearg, size_t count, size_t size,
+static void
+backtrace_qsort_impl (uintptr_t *base, size_t count, size_t size,
 		 int (*compar) (const void *, const void *))
 {
-  char *base = (char *) basearg;
   size_t i;
   size_t mid;
 
@@ -93,16 +93,29 @@ backtrace_qsort (void *basearg, size_t count, size_t size,
      ensures that our maximum stack depth is log count.  */
   if (2 * mid < count)
     {
-      backtrace_qsort (base, mid, size, compar);
+      backtrace_qsort_impl (base, mid, size, compar);
       base += (mid + 1) * size;
       count -= mid + 1;
       goto tail_recurse;
     }
   else
     {
-      backtrace_qsort (base + (mid + 1) * size, count - (mid + 1),
+      backtrace_qsort_impl (base + (mid + 1) * size, count - (mid + 1),
 		       size, compar);
       count = mid;
       goto tail_recurse;
     }
+}
+
+void
+backtrace_qsort (void *basearg, size_t count, size_t size,
+		 int (*compar) (const void *, const void *))
+{
+  /* both base pointer and size should be sizeof(uintptr_t) aligned */
+  if (size % sizeof(uintptr_t) != 0 ||
+      (uintptr_t) basearg % sizeof(uintptr_t) != 0)
+    abort();
+
+  backtrace_qsort_impl ((uintptr_t *)(char *) basearg, count,
+			size / sizeof (void *), compar);
 }
