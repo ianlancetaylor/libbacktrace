@@ -6784,6 +6784,13 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
   if (shnum == 0 || shstrndx == 0)
     goto fail;
 
+  if (shstrndx >= shnum)
+    {
+      error_callback (data,
+		      "ELF section header string table index out of range", 0);
+      goto fail;
+    }
+
   /* To translate PC to file/line when using DWARF, we need to find
      the .debug_info and .debug_line sections.  */
 
@@ -6996,7 +7003,7 @@ elf_add (struct backtrace_state *state, const char *filename, int descriptor,
 
       symtab_shdr = &shdrs[symtab_shndx - 1];
       strtab_shndx = symtab_shdr->sh_link;
-      if (strtab_shndx >= shnum)
+      if (strtab_shndx == 0 || strtab_shndx >= shnum)
 	{
 	  error_callback (data,
 			  "ELF symbol table strtab link out of range", 0);
