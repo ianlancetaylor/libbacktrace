@@ -35,6 +35,7 @@ POSSIBILITY OF SUCH DAMAGE.  */
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "backtrace.h"
@@ -59,6 +60,7 @@ backtrace_get_view (struct backtrace_state *state ATTRIBUTE_UNUSED,
 		    backtrace_error_callback error_callback,
 		    void *data, struct backtrace_view *view)
 {
+  struct stat st;
   size_t pagesize;
   unsigned int inpage;
   off_t pageoff;
@@ -67,6 +69,24 @@ backtrace_get_view (struct backtrace_state *state ATTRIBUTE_UNUSED,
   if ((uint64_t) (size_t) size != size)
     {
       error_callback (data, "file size too large", 0);
+      return 0;
+    }
+
+  /* mmap accepts a range beyond the end of the file, and the first
+     read of those bytes then raises SIGBUS.  A truncated file reaches
+     that point easily: the dynamic loader only needs the PT_LOAD
+     segments at the front of a shared library, so a half-copied one
+     still loads, with its section headers and debug sections beyond
+     the end of the file.  Refuse such a range here, as read.c does.  */
+  if (fstat (descriptor, &st) < 0)
+    {
+      error_callback (data, "fstat", errno);
+      return 0;
+    }
+  if ((uint64_t) offset > (uint64_t) st.st_size
+      || size > (uint64_t) st.st_size - (uint64_t) offset)
+    {
+      error_callback (data, "file too short", 0);
       return 0;
     }
 
