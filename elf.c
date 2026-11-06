@@ -1176,7 +1176,7 @@ elf_fetch_bits (const unsigned char **ppin, const unsigned char *pinend,
 
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) \
     && defined(__ORDER_BIG_ENDIAN__) \
-    && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ \
+    && ((__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ && defined(__GNUC__)) \
         || __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
   /* We've ensured that PIN is aligned.  */
   next = *(const uint32_t *)pin;
@@ -1230,7 +1230,7 @@ elf_fetch_bits_backward (const unsigned char **ppin,
 
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) \
   && defined(__ORDER_BIG_ENDIAN__)				\
-  && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__			\
+  && ((__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ && defined(__GNUC__)) \
       || __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
   /* We've ensured that PIN is aligned.  */
   next = *(const uint32_t *)pin;
